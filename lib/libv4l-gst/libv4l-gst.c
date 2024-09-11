@@ -127,6 +127,9 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 	case VIDIOC_G_CTRL:
 		ret = get_ctrl_ioctl(priv, arg);
 		break;
+	case VIDIOC_G_EXT_CTRLS:
+		ret = get_ext_ctrl_ioctl(priv, arg);
+		break;
 	case VIDIOC_QBUF:
 		ret = qbuf_ioctl(priv, arg);
 		break;
@@ -156,6 +159,9 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	case VIDIOC_ENUM_FRAMESIZES :
 		ret = enum_framesizes_ioctl(priv, arg);
+		break;
+	case VIDIOC_G_SELECTION :
+		ret = g_selection_ioctl(priv, arg);
 		break;
 	default:
 		perror("unknown ioctl");

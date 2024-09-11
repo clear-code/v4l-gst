@@ -1313,6 +1313,25 @@ get_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_control *ctrl)
 	return ret;
 }
 
+int
+get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *ext_ctrls)
+{
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+	unsigned int i;
+
+	for (i = 0; i < ext_ctrls->count; i++) {
+		struct v4l2_ext_control *ext_ctrl = &ext_ctrls->controls[i];
+		if (ext_ctrl->id == V4L2_CID_MIN_BUFFERS_FOR_CAPTURE) {
+			ext_ctrl->value = priv->cap_min_buffers;
+			continue;
+		}
+		errno = EINVAL;
+		return -1;
+	}
+
+	return 0;
+}
+
 static gboolean
 is_supported_memory_io(enum v4l2_memory memory)
 {
@@ -2916,4 +2935,14 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		return 0;
 	}
 	return -1;
+}
+
+int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection) {
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+
+	selection->r.top = selection->r.left = 0;
+	selection->r.width = priv->cap_pix_fmt.width;
+	selection->r.height = priv->cap_pix_fmt.height;
+
+	return 0;
 }
