@@ -710,12 +710,12 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		wait_for_cap_reqbuf_invocation(priv);
 
 		set_buffer_pool_params(priv->sink_pool, caps, info.size,
-				       priv->cap_buffers_num,
+				       priv->cap_buffers_num - 4, /* XXX */
 				       priv->cap_buffers_num);
 
 		gst_query_add_allocation_pool(query, priv->sink_pool,
 					      info.size,
-					      priv->cap_buffers_num,
+					      priv->cap_buffers_num - 4, /* XXX */
 					      priv->cap_buffers_num);
 	}
 
