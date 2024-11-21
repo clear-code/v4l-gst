@@ -163,8 +163,36 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 	case VIDIOC_G_SELECTION :
 		ret = g_selection_ioctl(priv, arg);
 		break;
+	case VIDIOC_QUERYCTRL:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_QUERYCTRL (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_QUERYMENU:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_QUERYMENU (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_G_CROP:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_G_CROP (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_TRY_FMT:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_TRY_FMT (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_UNSUBSCRIBE_EVENT:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_UNSUBSCRIBE_EVENT (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_DECODER_CMD:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_DECODER_CMD (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
+	case VIDIOC_TRY_DECODER_CMD:
+		fprintf(stderr, "Not implemented ioctl: VIDIOC_TRY_DECODER_CMD (%lu)\n", cmd);
+		errno = ENOTTY;
+		break;
 	default:
-		perror("unknown ioctl");
+		fprintf(stderr, "unknown ioctl: %lu\n", cmd);
 		errno = ENOTTY;
 		break;
 	}
