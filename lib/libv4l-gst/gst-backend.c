@@ -3070,3 +3070,11 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 	}
 	return 0;
 }
+
+/* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
+int try_fmt_ioctl(struct v4l_gst_priv *ctx, struct v4l2_format *format)
+{
+	fprintf(stderr, "v4l2_format type: %x\n", format->type);
+
+	return 0;
+}

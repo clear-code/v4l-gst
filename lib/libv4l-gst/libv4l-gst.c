@@ -179,6 +179,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	case VIDIOC_TRY_FMT:
 		fprintf(stderr, "Not implemented ioctl: VIDIOC_TRY_FMT (%lu)\n", cmd);
+		ret = try_fmt_ioctl(priv, arg);
 		errno = ENOTTY;
 		break;
 	case VIDIOC_UNSUBSCRIBE_EVENT:
