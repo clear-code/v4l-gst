@@ -46,5 +46,7 @@ int subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event_s
 int dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev);
 int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_exportbuffer *buf);
 void * gst_backend_mmap(struct v4l_gst_priv *dev_ops_priv, void *start, size_t length, int prot, int flags, int fd, int64_t offset);
+int get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *ext_ctrls);
+int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection);
 
 #endif /* __GST_BACKEND_H__ */
