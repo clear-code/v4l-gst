@@ -2968,3 +2968,105 @@ int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *
 
 	return 0;
 }
+
+/* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
+int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctl *query_ctrl) {
+
+	switch (query_ctrl->id) {
+	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
+		query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
+		query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
+		break;
+	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
+		query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
+		query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
+		break;
+	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
+		query_ctrl->minimum = V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN;
+		query_ctrl->maximum = query_ctrl->minimum;
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP8_PROFILE:
+		query_ctrl->minimum = V4L2_MPEG_VIDEO_VP8_PROFILE_0;
+		query_ctrl->maximum = query_ctrl->minimum;
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP9_PROFILE:
+		query_ctrl->minimum = V4L2_MPEG_VIDEO_VP9_PROFILE_0;
+		query_ctrl->maximum = V4L2_MPEG_VIDEO_VP9_PROFILE_2;
+		break;
+	/* TODO: fill info for other supported ctrls */
+	default:
+		fprintf(stderr, "unsupported query_ctrl id: %x\n", query_ctrl->id);
+		errno = EINVAL;
+		return -1;
+	}
+	return 0;
+}
+
+/* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L778-L842 */
+int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu) {
+
+	fprintf(stderr, "unsupported query_menu id: %x\n", query_menu->id);
+	fprintf(stderr, "unsupported query_menu index: %x\n", query_menu->index);
+
+	switch (query_menu->id) {
+	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
+		switch (query_menu->index) {
+		case V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE:
+		case V4L2_MPEG_VIDEO_H264_PROFILE_MAIN:
+		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH:
+		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10:
+			break;
+		default:
+			fprintf(stderr, "unsupported H264 profile index: %x\n", query_menu->index);
+			errno = EINVAL;
+			return -1;
+		}
+		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_H264_PROFILE index: %x\n", query_menu->index);
+		break;
+	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
+		switch (query_menu->index) {
+		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN:
+		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10:
+			break;
+		default:
+			fprintf(stderr, "unsupported HEVC profile index: %x\n", query_menu->index);
+			errno = EINVAL;
+			return -1;
+		}
+		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_HEVC_PROFILE index: %x\n", query_menu->index);
+		break;
+	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
+		if (query_menu->index != V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN) {
+			fprintf(stderr, "unsupported VP8 profile index: %x\n", query_menu->index);
+			errno = EINVAL;
+			return -1;
+		}
+		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_AV1_PROFILE index: %x\n", query_menu->index);
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP8_PROFILE:
+		if (query_menu->index != V4L2_MPEG_VIDEO_VP8_PROFILE_0) {
+			fprintf(stderr, "unsupported VP8 profile index: %x\n", query_menu->index);
+			errno = EINVAL;
+			return -1;
+		}
+		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_VP8_PROFILE index: %x\n", query_menu->index);
+		break;
+	case V4L2_CID_MPEG_VIDEO_VP9_PROFILE:
+		switch (query_menu->index) {
+		case V4L2_MPEG_VIDEO_VP9_PROFILE_0:
+		case V4L2_MPEG_VIDEO_VP9_PROFILE_2:
+			break;
+		default:
+			fprintf(stderr, "unsupported VP9 profile index: %x\n", query_menu->index);
+			errno = EINVAL;
+			return -1;
+		}
+		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_VP9_PROFILE index: %x\n", query_menu->index);
+		break;
+	default:
+		fprintf(stderr, "unsupported menu: %x\n", query_menu->id);
+		errno = EINVAL;
+		return -1;
+	}
+	return 0;
+}
