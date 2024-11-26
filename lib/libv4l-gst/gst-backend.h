@@ -48,5 +48,10 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_exportbuffer *bu
 void * gst_backend_mmap(struct v4l_gst_priv *dev_ops_priv, void *start, size_t length, int prot, int flags, int fd, int64_t offset);
 int get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *ext_ctrls);
 int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection);
+int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *query_ctrl);
+int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu);
+int g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop);
+int try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format);
+int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd);
 
 #endif /* __GST_BACKEND_H__ */
