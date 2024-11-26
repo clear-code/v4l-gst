@@ -193,7 +193,8 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	case VIDIOC_TRY_DECODER_CMD:
 		fprintf(stderr, "Not implemented ioctl: VIDIOC_TRY_DECODER_CMD (%lu)\n", cmd);
-		errno = ENOTTY;
+		ret = try_decoder_cmd_ioctl(priv, arg);
+                errno = ENOTTY;
 		break;
 	default:
 		fprintf(stderr, "unknown ioctl: %lu\n", cmd);

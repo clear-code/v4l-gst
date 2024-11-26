@@ -3135,3 +3135,32 @@ int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 
 	return 0;
 }
+
+int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd)
+{
+
+	fprintf(stderr, "v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x\n", decoder_cmd->cmd, decoder_cmd->flags);
+	switch (decoder_cmd->cmd) {
+	case V4L2_DEC_CMD_START:
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_START\n");
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %ld format: %lx\n", decoder_cmd->start.speed, decoder_cmd->start.format);
+		break;
+	case V4L2_DEC_CMD_STOP:
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_STOP\n");
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu\n", decoder_cmd->stop.pts);
+		break;
+	case V4L2_DEC_CMD_PAUSE:
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_PAUSE\n");
+		break;
+	case V4L2_DEC_CMD_RESUME:
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_RESUME\n");
+		break;
+	case V4L2_DEC_CMD_FLUSH:
+		fprintf(stderr, "v4l2_dec_cmd: V4L2_DEC_CMD_FLUSH\n");
+		break;
+	default:
+		fprintf(stderr, "unsupported v4l2_decoder_cmd cmd: 0x%x\n", decoder_cmd->cmd);
+		break;
+	}
+	return 0;
+}
