@@ -2981,6 +2981,7 @@ int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *qu
 		query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 		query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
 		break;
+#if 0 // No AV1, VP8, VP9 definition
 	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
 		query_ctrl->minimum = V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN;
 		query_ctrl->maximum = query_ctrl->minimum;
@@ -2993,6 +2994,7 @@ int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *qu
 		query_ctrl->minimum = V4L2_MPEG_VIDEO_VP9_PROFILE_0;
 		query_ctrl->maximum = V4L2_MPEG_VIDEO_VP9_PROFILE_2;
 		break;
+#endif
 	/* TODO: fill info for other supported ctrls */
 	default:
 		fprintf(stderr, "unsupported query_ctrl id: %x\n", query_ctrl->id);
