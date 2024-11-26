@@ -2970,7 +2970,7 @@ int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *
 }
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
-int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctl *query_ctrl) {
+int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *query_ctrl) {
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
