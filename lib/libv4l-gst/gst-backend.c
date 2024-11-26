@@ -3078,3 +3078,60 @@ int try_fmt_ioctl(struct v4l_gst_priv *ctx, struct v4l2_format *format)
 
 	return 0;
 }
+
+int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
+{
+	fprintf(stderr, "v4l2_crop type: 0x%x\n", crop->type);
+
+	switch (crop->type) {
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_CAPTURE\n");
+		break;
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT\n");
+		break;
+	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OVERLAY\n");
+		break;
+	case V4L2_BUF_TYPE_VBI_CAPTURE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VBI_CAPTURE\n");
+		break;
+	case V4L2_BUF_TYPE_VBI_OUTPUT:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VBI_OUTPUT\n");
+		break;
+	case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_SLICED_VBI_CAPTURE\n");
+		break;
+	case V4L2_BUF_TYPE_SLICED_VBI_OUTPUT:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_SLICED_VBI_OUTPUT\n");
+		break;
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY\n");
+		break;
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE\n");
+		break;
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE\n");
+		break;
+	case V4L2_BUF_TYPE_SDR_CAPTURE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_SDR_CAPTURE\n");
+		break;
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_SDR_OUTPUT\n");
+		break;
+	case V4L2_BUF_TYPE_META_CAPTURE:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_META_CAPTURE\n");
+		break;
+	case V4L2_BUF_TYPE_META_OUTPUT:
+		fprintf(stderr, "v4l2_crop type: V4L2_BUF_TYPE_META_OUTPUT\n");
+		break;
+	default:
+		fprintf(stderr, "unsupported v4l2_crop type: 0x%x\n", crop->type);
+		break;
+	}
+	fprintf(stderr, "v4l2_crop rect: left:%ld top:%ld width: %lu height: %lu\n",
+		crop->rect.left, crop->rect.top, crop->rect.width, crop->rect.height);
+
+	return 0;
+}

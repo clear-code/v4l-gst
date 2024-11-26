@@ -175,6 +175,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	case VIDIOC_G_CROP:
 		fprintf(stderr, "Not implemented ioctl: VIDIOC_G_CROP (%lu)\n", cmd);
+		ret = g_crop_ioctl(priv, arg);
 		errno = ENOTTY;
 		break;
 	case VIDIOC_TRY_FMT:
