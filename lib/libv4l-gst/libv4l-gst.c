@@ -165,7 +165,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	case VIDIOC_QUERYCTRL:
 		fprintf(stderr, "Not implemented ioctl: VIDIOC_QUERYCTRL (%lu)\n", cmd);
-		ret = queryctl_ioctl(priv, arg);
+		ret = queryctrl_ioctl(priv, arg);
 		errno = ENOTTY;
 		break;
 	case VIDIOC_QUERYMENU:
