@@ -20,6 +20,7 @@
 #define __GST_BACKEND_H__
 
 #include <linux/videodev2.h>
+#include <linux/v4l2-controls.h>
 
 #include <gst/video/video.h>
 #include <gst/app/gstappsrc.h>
