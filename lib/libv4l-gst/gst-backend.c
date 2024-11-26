@@ -3135,7 +3135,7 @@ int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 		break;
 	}
 	fprintf(stderr, "v4l2_crop rect: left:%ld top:%ld width: %lu height: %lu\n",
-		crop->rect.left, crop->rect.top, crop->rect.width, crop->rect.height);
+		crop->c.left, crop->c.top, crop->c.width, crop->c.height);
 
 	return 0;
 }
