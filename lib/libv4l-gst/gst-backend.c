@@ -3037,6 +3037,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 		}
 		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_HEVC_PROFILE index: %x\n", query_menu->index);
 		break;
+#if 0 // omit non-supported AV1, VP8, VP9
 	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
 		if (query_menu->index != V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN) {
 			fprintf(stderr, "unsupported VP8 profile index: %x\n", query_menu->index);
@@ -3065,6 +3066,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 		}
 		fprintf(stderr, "V4L2_CID_MPEG_VIDEO_VP9_PROFILE index: %x\n", query_menu->index);
 		break;
+#endif
 	default:
 		fprintf(stderr, "unsupported menu: %x\n", query_menu->id);
 		errno = EINVAL;
