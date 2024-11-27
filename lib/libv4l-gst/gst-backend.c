@@ -758,6 +758,7 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 	struct gst_backend_priv *priv = user_data;
 	if (priv->eos_buffer)
 		release_out_buffer(priv, priv->eos_buffer);
+	GST_DEBUG("Got EOS event");
 }
 
 static GstFlowReturn
@@ -1456,10 +1457,11 @@ qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 	if (buf->m.planes[0].bytesused == 0) {
 		flow_ret = gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
 		if (flow_ret != GST_FLOW_OK) {
-			GST_ERROR("Failed to send an eos event");
+			GST_ERROR("Failed to send an EOS event");
 			errno = EINVAL;
 			return -1;
 		}
+		GST_DEBUG("Send EOS event");
 
 		gst_buffer_unmap(buffer->buffer, &buffer->info);
 		memset(&buffer->info, 0, sizeof(buffer->info));
