@@ -31,8 +31,8 @@
 #include "evfd-ctrl.h"
 #include "debug.h"
 
-GST_DEBUG_CATEGORY_STATIC(v4lgst);
-#define GST_CAT_DEFAULT v4lgst
+GST_DEBUG_CATEGORY_STATIC(v4l_gst_debug_category);
+#define GST_CAT_DEFAULT v4l_gst_debug_category
 
 #define DEF_CAP_MIN_BUFFERS		2
 #define INPUT_BUFFERING_CNT		16 // must be <= than VIDEO_MAX_FRAME
@@ -889,7 +889,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->dev_ops_priv = dev_ops_priv;
 
 	gst_init(NULL, NULL);
-        GST_DEBUG_CATEGORY_INIT(v4lgst, "v4l-gst", 0, "v4l-gst category");
+        GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category), "v4l-gst", 0, "debug category for v4l-gst application");
 
 	if (!parse_conf_settings(&pipeline_str, &pool_lib_path,
 				 &priv->cap_min_buffers,
