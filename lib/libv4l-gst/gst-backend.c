@@ -2065,7 +2065,7 @@ inactivate_pool:
 
 static GstFlowReturn
 force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
-		      gint buffers_num, gboolean map)
+		      gint buffers_num, gboolean map, GstBuffer **prev_buffer)
 {
 	GstFlowReturn flow_ret;
 	GstBufferPoolAcquireParams params = { 0, };
@@ -2078,6 +2078,15 @@ force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
 	flow_ret = gst_buffer_pool_acquire_buffer(pool, &buffer, &params);
 	if (flow_ret != GST_FLOW_OK)
 		return flow_ret;
+	if (prev_buffer) {
+		/* omxbufferpool always returns same address when the buffer is
+		   dmabuf
+		   https://github.com/GStreamer/gst-omx/blob/4a35d4ee81fe707845ae33f2a5ac701ad01c3e4d/omx/gstomxbufferpool.c#L591-L625
+		*/
+		if (*prev_buffer && buffer == *prev_buffer)
+			return GST_FLOW_ERROR;
+		*prev_buffer = buffer;
+	}
 
 	index = get_v4l2_buffer_index(buffers, buffers_num, buffer);
 	if (index >= buffers_num) {
@@ -2106,7 +2115,7 @@ force_out_dqbuf(struct gst_backend_priv *priv)
 	g_mutex_lock(&priv->queue_mutex);
 
 	while (force_dqbuf_from_pool(priv->src_pool, priv->out_buffers,
-			 priv->out_buffers_num, true) == GST_FLOW_OK) {
+			   priv->out_buffers_num, true, NULL) == GST_FLOW_OK) {
 		priv->returned_out_buffers_num--;
 	}
 
@@ -2124,6 +2133,7 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 {
 	GstBuffer *buffer;
 	guint index;
+	GstFlowReturn flow_ret;
 
 	g_mutex_lock(&priv->queue_mutex);
 
@@ -2148,8 +2158,14 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 
 	g_mutex_unlock(&priv->queue_mutex);
 
-	while (force_dqbuf_from_pool(priv->sink_pool, priv->cap_buffers,
-		     priv->cap_buffers_num, false) == GST_FLOW_OK);
+	buffer = NULL;
+	do {
+		flow_ret = force_dqbuf_from_pool(priv->sink_pool,
+						 priv->cap_buffers,
+						 priv->cap_buffers_num,
+						 false,
+						 &buffer);
+	} while (flow_ret == GST_FLOW_OK);
 
 	return 0;
 }
