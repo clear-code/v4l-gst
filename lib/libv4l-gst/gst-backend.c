@@ -3148,7 +3148,7 @@ int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 		GST_DEBUG("unsupported v4l2_crop type: 0x%x", crop->type);
 		break;
 	}
-	GST_DEBUG("v4l2_crop rect: left:%ld top:%ld width: %lu height: %lu",
+	GST_DEBUG("v4l2_crop rect: left:%d top:%d width: %u height: %u",
 		crop->c.left, crop->c.top, crop->c.width, crop->c.height);
 
 	return 0;
@@ -3161,7 +3161,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *dec
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START");
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %ld format: %lx", decoder_cmd->start.speed, decoder_cmd->start.format);
+		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %d format: %x", decoder_cmd->start.speed, decoder_cmd->start.format);
 		break;
 	case V4L2_DEC_CMD_STOP:
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_STOP");
