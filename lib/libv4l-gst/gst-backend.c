@@ -1902,7 +1902,7 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_QQBUF:dqbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
+	GST_DEBUG("VIDIOC_DQBUF:dqbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
