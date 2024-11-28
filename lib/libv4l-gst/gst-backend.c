@@ -981,6 +981,11 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 int
 querycap_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_capability *cap)
 {
+#if 0
+	GST_DEBUG("VIDIOC_QUERYCAP(querycap_ioctl) driver: %s card: %s bus_info: %s version: %s\n", cap->driver, cap->card, cap->bus_info, cap->version);
+#else
+	GST_DEBUG("VIDIOC_QUERYCAP(querycap_ioctl)\n");
+#endif
 	cap->device_caps = V4L2_CAP_VIDEO_M2M_MPLANE
 #ifdef ENABLE_CHROMIUM_COMPAT
 			| V4L2_CAP_VIDEO_CAPTURE_MPLANE
@@ -1101,6 +1106,8 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_S_FMT:set_fmt_ioctl: type: 0x%x\n", fmt->type);
+
 	g_mutex_lock(&priv->dev_lock);
 
 	GST_OBJECT_LOCK(priv->pipeline);
@@ -1177,6 +1184,8 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	struct v4l2_pix_format_mplane *pix_fmt;
 	int ret;
 
+	GST_DEBUG("VIDIOC_G_FMT:get_fmt_ioctl: type: 0x%x\n", fmt->type);
+
 	pix_fmt = &fmt->fmt.pix_mp;
 
 	if (fmt->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -1203,6 +1212,9 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	struct fmts *fmts;
 	gint fmts_num;
+
+	GST_DEBUG("VIDIOC_ENUM_FMT:enum_fmt_ioctl: type: 0x%x index: %d flags:0x%x description: %s pixelformat: 0x%x\n",
+		  desc->type, desc->index, desc->flags, desc->description, desc->pixelformat);
 
 	if (!priv->out_fmts || !priv->cap_fmts) {
 		GST_ERROR("Supported formats lists are not prepared");
@@ -1239,6 +1251,8 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 int
 enum_framesizes_ioctl (struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp) {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+
+	GST_DEBUG("VIDIOC_ENUM_FRAMESIZES:enum_framesizes_ioctl: type: 0x%x index: %d pixel_format: 0x%x\n", argp->type, argp->index, argp->pixel_format);
 
 	switch (argp->pixel_format) {
         case V4L2_PIX_FMT_GREY:
@@ -1302,6 +1316,8 @@ get_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_control *ctrl)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_G_CTRL:get_ctrl_ioctl: id: 0x%x value: 0x%x\n", ctrl->id, ctrl->value);
+
 	switch (ctrl->id) {
 	case V4L2_CID_MIN_BUFFERS_FOR_CAPTURE:
 		ctrl->value = priv->cap_min_buffers;
@@ -1322,6 +1338,8 @@ get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	unsigned int i;
+
+	GST_DEBUG("VIDIOC_G_EXT_CTRLS:get_ext_ctrl_ioctl: count: %d\n", ext_ctrls->count);
 
 	for (i = 0; i < ext_ctrls->count; i++) {
 		struct v4l2_ext_control *ext_ctrl = &ext_ctrls->controls[i];
@@ -1593,6 +1611,8 @@ qbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
+
+	GST_DEBUG("VIDIOC_QBUF:qbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1882,6 +1902,8 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_QQBUF:dqbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
+
 	g_mutex_lock(&priv->dev_lock);
 
 	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -1918,6 +1940,8 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	gint buffers_num;
 	GstBufferPool *pool;
 	int ret;
+
+	GST_DEBUG("VIDIOC_QUERYBUF:querybuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -2603,6 +2627,8 @@ reqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_requestbuffers *req)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_REQBUF:reqbuf_ioctl: type: 0x%x count: %d memory: 0x%x\n", req->type, req->count, req->memory);
+
 	if (req->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = reqbuf_ioctl_out(priv, req);
 	} else if (req->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
@@ -2730,6 +2756,8 @@ streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_STREAMON:streamon_ioctl: type: 0x%x\n", *type);
+
 	if (*type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		GST_DEBUG("streamon on OUTPUT");
 		ret = streamon_ioctl_out(priv);
@@ -2751,6 +2779,8 @@ streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
+	GST_DEBUG("VIDIOC_STREAMOFF:streamoff_ioctl: type: 0x%x\n", *type);
+
 	if (*type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		g_mutex_lock(&priv->dev_lock);
 		ret = streamoff_ioctl_out(priv, TRUE);
@@ -2771,6 +2801,8 @@ int
 subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		      struct v4l2_event_subscription *sub)
 {
+	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT:subscribe_event_ioctl: type: 0x%x id: %d flags: 0x%x\n", sub->type, sub->id, sub->flags);
+
 	return 0;
 }
 
@@ -2779,6 +2811,8 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 {
 	/* TODO: Add the implementation for subscribed event notifications.
 		 Always return failure until the feature has been supported. */
+	GST_DEBUG("VIDIOC_DQEVENT:dqevent_ioctl: id: %d sequence: %d pending: %d\n", ev->id, ev->sequence, ev->pending);
+
 	return -1;
 }
 
@@ -2937,6 +2971,8 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	guint i = 0;
 	GstMemory *mem = NULL;
 
+	GST_DEBUG("VIDIOC_EXPBUF:expbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", expbuf->type, expbuf->index, expbuf->flags);
+
 	if ((expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) ||
 	    (expbuf->type == V4L2_BUF_TYPE_PRIVATE)) {
 		buffer = &priv->cap_buffers[expbuf->index];
@@ -2975,6 +3011,8 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection) {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+
+	GST_DEBUG("VIDIOC_G_SELECTION:g_selection_ioctl: type: 0x%x target: 0x%x flags: 0x%x\n", selection->type, selection->target, selection->flags);
 
 	selection->r.top = selection->r.left = 0;
 	selection->r.width = priv->cap_pix_fmt.width;
