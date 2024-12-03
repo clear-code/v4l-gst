@@ -2103,9 +2103,8 @@ force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
 	if (flow_ret != GST_FLOW_OK)
 		return flow_ret;
 	if (prev_buffer) {
-		/* omxbufferpool always returns same address when the buffer is
-		   dmabuf
-		   https://github.com/GStreamer/gst-omx/blob/4a35d4ee81fe707845ae33f2a5ac701ad01c3e4d/omx/gstomxbufferpool.c#L591-L625
+		/* omxbufferpool always returns same address
+		   https://github.com/renesas-rcar/gst-omx/blob/RCAR-GEN3e/1.16.3/omx/gstomxbufferpool.c#L739-L779
 		*/
 		if (*prev_buffer && buffer == *prev_buffer)
 			return GST_FLOW_ERROR;
