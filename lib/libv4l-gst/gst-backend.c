@@ -1735,7 +1735,7 @@ dequeue_non_blocking(GQueue *queue)
 
 	buffer = g_queue_pop_head(queue);
 	if (!buffer) {
-		GST_DEBUG("The buffer pool is empty in "
+		GST_TRACE("The buffer pool is empty in "
 			  "the non-blocking mode, return EAGAIN");
 		errno = EAGAIN;
 	}
@@ -2211,6 +2211,8 @@ flush_pipeline(struct gst_backend_priv *priv)
 		return -1;
 	}
 
+	GST_DEBUG("flush stop ...");
+
 	event = gst_event_new_flush_stop(TRUE);
 	if (!gst_element_send_event(priv->pipeline, event)) {
 		GST_ERROR("Failed to send a flush stop event");
@@ -2296,6 +2298,8 @@ reqbuf_ioctl_out(struct gst_backend_priv *priv,
 	g_mutex_lock(&priv->dev_lock);
 
 	if (req->count == 0) {
+		GST_DEBUG("req->count == 0");
+
 		/* The following function flushes both the OUTPUT and CAPTURE
 		   buffer types because the GStreamer can only flush the whole
 		   of the pipeline, so the buffers of both the buffer types
@@ -2543,6 +2547,8 @@ reqbuf_ioctl_cap(struct gst_backend_priv *priv,
 	g_mutex_lock(&priv->dev_lock);
 
 	if (req->count == 0) {
+		GST_DEBUG("req->count == 0");
+
 		state_ret = gst_element_set_state(priv->pipeline,
 						  GST_STATE_NULL);
 		while (state_ret == GST_STATE_CHANGE_ASYNC) {
@@ -2759,12 +2765,13 @@ streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	GST_DEBUG("VIDIOC_STREAMON:streamon_ioctl: type: 0x%x\n", *type);
 
 	if (*type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		GST_DEBUG("streamon on OUTPUT");
+		GST_DEBUG("on OUTPUT");
 		ret = streamon_ioctl_out(priv);
-	} else if (*type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+	} else if (*type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		GST_DEBUG("on CAPTURE");
 		/* no processing */
 		ret = 0;
-	else {
+	} else {
 		GST_ERROR("Invalid buf type");
 		errno = EINVAL;
 		ret = -1;
