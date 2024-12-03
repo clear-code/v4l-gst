@@ -1612,7 +1612,7 @@ qbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_QBUF:qbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_QBUF:qbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1902,7 +1902,7 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_DQBUF:dqbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_DQBUF:dqbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1941,7 +1941,7 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	GstBufferPool *pool;
 	int ret;
 
-	GST_DEBUG("VIDIOC_QUERYBUF:querybuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_QUERYBUF:querybuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", buf->type, buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -2817,7 +2817,7 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 {
 	/* TODO: Add the implementation for subscribed event notifications.
 		 Always return failure until the feature has been supported. */
-	GST_DEBUG("VIDIOC_DQEVENT:dqevent_ioctl: id: %d sequence: %d pending: %d\n", ev->id, ev->sequence, ev->pending);
+	GST_TRACE("VIDIOC_DQEVENT:dqevent_ioctl: id: %d sequence: %d pending: %d\n", ev->id, ev->sequence, ev->pending);
 
 	return -1;
 }
@@ -2977,7 +2977,7 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	guint i = 0;
 	GstMemory *mem = NULL;
 
-	GST_DEBUG("VIDIOC_EXPBUF:expbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", expbuf->type, expbuf->index, expbuf->flags);
+	GST_TRACE("VIDIOC_EXPBUF:expbuf_ioctl: type: 0x%x index: %d flags: 0x%x\n", expbuf->type, expbuf->index, expbuf->flags);
 
 	if ((expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) ||
 	    (expbuf->type == V4L2_BUF_TYPE_PRIVATE)) {
