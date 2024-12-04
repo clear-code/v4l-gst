@@ -176,12 +176,10 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		ret = try_fmt_ioctl(priv, arg);
 		break;
 	case VIDIOC_UNSUBSCRIBE_EVENT:
-		DBG_LOG("Not implemented ioctl: VIDIOC_UNSUBSCRIBE_EVENT (%lu)\n", cmd);
-		errno = ENOTTY;
+		ret = unsubscribe_event_ioctl(priv, arg);
 		break;
 	case VIDIOC_DECODER_CMD:
-		DBG_LOG("Not implemented ioctl: VIDIOC_DECODER_CMD (%lu)\n", cmd);
-		errno = ENOTTY;
+		ret = decoder_cmd_ioctl(priv, arg);
 		break;
 	case VIDIOC_TRY_DECODER_CMD:
 		ret = try_decoder_cmd_ioctl(priv, arg);

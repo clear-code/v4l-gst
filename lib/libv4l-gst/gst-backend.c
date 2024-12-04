@@ -3229,3 +3229,20 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *dec
 	}
 	return 0;
 }
+
+int unsubscribe_event_ioctl(struct v4l_gst_priv *ctx, v4l2_event_subscription *subscription)
+{
+	GST_INFO("unsupported VIDIOC_UNSUBSCRIBE_EVENT v4l2_event_subscription: type: 0x%x id: 0x%x flags: 0x%x",
+		 subscription->type, subscription->id, subscription->flags);
+
+	return 0;
+}
+
+int decoder_cmd_ioctl(struct v4l_gst_priv *ctx, v4l2_decoder_cmd *decoder_cmd)
+{
+	GST_INFO("unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
+		 decoder_cmd->cmd, decoder_cmd->flags);
+
+	return 0;
+}
+
