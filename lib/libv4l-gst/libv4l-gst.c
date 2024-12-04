@@ -164,24 +164,16 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		ret = g_selection_ioctl(priv, arg);
 		break;
 	case VIDIOC_QUERYCTRL:
-		DBG_LOG("Not implemented ioctl: VIDIOC_QUERYCTRL (%lu)\n", cmd);
 		ret = queryctrl_ioctl(priv, arg);
-		errno = ENOTTY;
 		break;
 	case VIDIOC_QUERYMENU:
-		DBG_LOG("Not implemented ioctl: VIDIOC_QUERYMENU (%lu)\n", cmd);
 		ret = querymenu_ioctl(priv, arg);
-		errno = ENOTTY;
 		break;
 	case VIDIOC_G_CROP:
-		DBG_LOG("Not implemented ioctl: VIDIOC_G_CROP (%lu)\n", cmd);
 		ret = g_crop_ioctl(priv, arg);
-		errno = ENOTTY;
 		break;
 	case VIDIOC_TRY_FMT:
-		DBG_LOG("Not implemented ioctl: VIDIOC_TRY_FMT (%lu)\n", cmd);
 		ret = try_fmt_ioctl(priv, arg);
-		errno = ENOTTY;
 		break;
 	case VIDIOC_UNSUBSCRIBE_EVENT:
 		DBG_LOG("Not implemented ioctl: VIDIOC_UNSUBSCRIBE_EVENT (%lu)\n", cmd);
@@ -192,9 +184,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		errno = ENOTTY;
 		break;
 	case VIDIOC_TRY_DECODER_CMD:
-		DBG_LOG("Not implemented ioctl: VIDIOC_TRY_DECODER_CMD (%lu)\n", cmd);
 		ret = try_decoder_cmd_ioctl(priv, arg);
-		errno = ENOTTY;
 		break;
 	default:
 		DBG_LOG("unknown ioctl: %lu\n", cmd);

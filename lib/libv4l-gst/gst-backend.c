@@ -3030,6 +3030,8 @@ int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
 int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *query_ctrl) {
 
+	GST_INFO("unsupported VIDIOC_QUERYCTRL id: 0x%x", query_ctrl->id);
+
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
 		query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
@@ -3065,8 +3067,8 @@ int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *qu
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L778-L842 */
 int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu) {
 
-	GST_ERROR("unsupported query_menu id: %x", query_menu->id);
-	GST_ERROR("unsupported query_menu index: %x", query_menu->index);
+	GST_INFO("unsupported VIDIOC_QUERYMENU query_menu id: %x", query_menu->id);
+	GST_INFO("unsupported query_menu index: %x", query_menu->index);
 
 	switch (query_menu->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
@@ -3136,14 +3138,14 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
 int try_fmt_ioctl(struct v4l_gst_priv *ctx, struct v4l2_format *format)
 {
-	GST_DEBUG("v4l2_format type: %x", format->type);
+	GST_INFO("unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x", format->type);
 
 	return 0;
 }
 
 int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 {
-	GST_DEBUG("v4l2_crop type: 0x%x", crop->type);
+	GST_INFO("unsupported VIDIOC_G_CROP v4l2_crop type: 0x%x", crop->type);
 
 	switch (crop->type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
@@ -3201,7 +3203,8 @@ int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd)
 {
 
-	GST_DEBUG("v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x", decoder_cmd->cmd, decoder_cmd->flags);
+	GST_INFO("unsupported VIDIOC_TRY_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x", decoder_cmd->cmd, decoder_cmd->flags);
+
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START");
