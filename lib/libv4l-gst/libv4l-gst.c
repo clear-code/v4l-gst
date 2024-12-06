@@ -52,6 +52,14 @@ static void *plugin_init(int fd)
 
 	DBG_LOG("start plugin_init\n");
 
+#ifdef ENABLE_VIDIOC_DEBUG
+	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
+	if (vidioc_features) {
+		DBG_LOG("DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
+	}
+	fprintf(stderr, "DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
+#endif
+
 	priv = calloc(1, sizeof(*priv));
 	if (!priv) {
 		perror("Couldn't allocate memory for plugin");
@@ -87,12 +95,6 @@ free_event:
 free_priv:
 	free(priv);
 
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
-	if (vidioc_features) {
-		DBG_LOG("DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
-	}
-#endif
 	return NULL;
 }
 
