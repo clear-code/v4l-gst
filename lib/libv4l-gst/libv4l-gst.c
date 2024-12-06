@@ -118,10 +118,6 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 
 	(void)fd; /* unused */
 
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv("DISABLE_VIDIOC_FEATURES");
-#endif
-
 	switch (cmd) {
 	case VIDIOC_QUERYCAP:
 		ret = querycap_ioctl(priv, arg);
@@ -139,16 +135,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		ret = get_ctrl_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_EXT_CTRLS:
-#ifdef ENABLE_VIDIOC_DEBUG
-		if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_EXT_CTRLS")) {
-			DBG_LOG("unsupported VIDIOC_G_EXT_CTRLS: %lu\n", cmd);
-			errno = ENOTTY;
-		} else {
-			ret = get_ext_ctrl_ioctl(priv, arg);
-		}
-#else
 		ret = get_ext_ctrl_ioctl(priv, arg);
-#endif
 		break;
 	case VIDIOC_QBUF:
 		ret = qbuf_ioctl(priv, arg);
@@ -181,16 +168,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		ret = enum_framesizes_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_SELECTION :
-#ifdef ENABLE_VIDIOC_DEBUG
-		if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_SELECTION")) {
-			DBG_LOG("unsupported VIDIOC_G_SELECTION: %lu\n", cmd);
-			errno = ENOTTY;
-		} else {
-			ret = g_selection_ioctl(priv, arg);
-		}
-#else
 		ret = g_selection_ioctl(priv, arg);
-#endif
 		break;
 	case VIDIOC_QUERYCTRL:
 		ret = queryctrl_ioctl(priv, arg);

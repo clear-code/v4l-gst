@@ -34,6 +34,8 @@
 GST_DEBUG_CATEGORY_STATIC(v4l_gst_debug_category);
 #define GST_CAT_DEFAULT v4l_gst_debug_category
 
+GST_DEBUG_CATEGORY_STATIC(v4l_gst_ioctl_debug_category);
+
 #define DEF_CAP_MIN_BUFFERS		2
 #define INPUT_BUFFERING_CNT		16 // must be <= than VIDEO_MAX_FRAME
 
@@ -890,6 +892,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 
 	gst_init(NULL, NULL);
         GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category, "v4l-gst", 0, "debug category for v4l-gst application");
+        GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category, "v4l-gst-ioctl", 0, "debug category for v4l-gst IOCTL operation");
 
 	if (!parse_conf_settings(&pipeline_str, &pool_lib_path,
 				 &priv->cap_min_buffers,
@@ -1338,6 +1341,15 @@ get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	unsigned int i;
+
+#ifdef ENABLE_VIDIOC_DEBUG
+	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
+	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_EXT_CTRLS")) {
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_G_EXT_CTRLS");
+		errno = ENOTTY;
+		return 0;
+	}
+#endif
 
 	GST_DEBUG("VIDIOC_G_EXT_CTRLS:get_ext_ctrl_ioctl: count: %d", ext_ctrls->count);
 
@@ -3018,6 +3030,14 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection) {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
+#ifdef ENABLE_VIDIOC_DEBUG
+	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
+	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_SELECTION")) {
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_G_SELECTION");
+		errno = ENOTTY;
+		return 0;
+	}
+#endif
 	GST_DEBUG("VIDIOC_G_SELECTION:g_selection_ioctl: type: 0x%x target: 0x%x flags: 0x%x", selection->type, selection->target, selection->flags);
 
 	selection->r.top = selection->r.left = 0;
