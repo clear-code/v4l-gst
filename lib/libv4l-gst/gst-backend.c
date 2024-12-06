@@ -3174,7 +3174,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 }
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
-int try_fmt_ioctl(struct v4l_gst_priv *ctx, struct v4l2_format *format)
+int try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3189,7 +3189,7 @@ int try_fmt_ioctl(struct v4l_gst_priv *ctx, struct v4l2_format *format)
 	return 0;
 }
 
-int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
+int g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3255,7 +3255,7 @@ int g_crop_ioctl(struct v4l_gst_priv *ctx, struct v4l2_crop *crop)
 	return 0;
 }
 
-int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd)
+int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3294,7 +3294,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *dec
 	return 0;
 }
 
-int unsubscribe_event_ioctl(struct v4l_gst_priv *ctx, struct v4l2_event_subscription *subscription)
+int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event_subscription *subscription)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3312,7 +3312,7 @@ int unsubscribe_event_ioctl(struct v4l_gst_priv *ctx, struct v4l2_event_subscrip
 	return 0;
 }
 
-int decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd)
+int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);

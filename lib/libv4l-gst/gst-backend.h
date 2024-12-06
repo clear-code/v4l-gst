@@ -54,8 +54,8 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 int g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop);
 int try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format);
 int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd);
-int unsubscribe_event_ioctl(struct v4l_gst_priv *ctx, struct v4l2_event_subscription *subscription);
-int decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd);
+int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event_subscription *subscription);
+int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd);
 
 #define ENV_DISABLE_VIDIOC_FEATURES "DISABLE_VIDIOC_FEATURES"
 
