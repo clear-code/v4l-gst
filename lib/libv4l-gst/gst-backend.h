@@ -57,4 +57,6 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 int unsubscribe_event_ioctl(struct v4l_gst_priv *ctx, struct v4l2_event_subscription *subscription);
 int decoder_cmd_ioctl(struct v4l_gst_priv *ctx, struct v4l2_decoder_cmd *decoder_cmd);
 
+#define ENV_DISABLE_VIDIOC_FEATURES "DISABLE_VIDIOC_FEATURES"
+
 #endif /* __GST_BACKEND_H__ */

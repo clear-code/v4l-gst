@@ -88,9 +88,9 @@ free_priv:
 	free(priv);
 
 #ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv("DISABLE_VIDIOC_FEATURES");
+	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features) {
-		fprintf(stderr, "DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
+		DBG_LOG("DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
 	}
 #endif
 	return NULL;
