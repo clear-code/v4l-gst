@@ -2821,6 +2821,35 @@ subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 {
 	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT:subscribe_event_ioctl: type: 0x%x id: %d flags: 0x%x", sub->type, sub->id, sub->flags);
 
+	switch(sub->type) {
+	case V4L2_EVENT_ALL:
+		GST_DEBUG("V4L2_EVENT_ALL");
+		break;
+	case V4L2_EVENT_VSYNC:
+		GST_DEBUG("V4L2_EVENT_SYNC");
+		break;
+	case V4L2_EVENT_EOS:
+		GST_DEBUG("V4L2_EVENT_EOS");
+		break;
+	case V4L2_EVENT_CTRL:
+		GST_DEBUG("V4L2_EVENT_CTRL");
+		break;
+	case V4L2_EVENT_FRAME_SYNC:
+		GST_DEBUG("V4L2_EVENT_FRAME_SYNC");
+		break;
+	case V4L2_EVENT_SOURCE_CHANGE:
+		GST_DEBUG("V4L2_EVENT_SOURCE_CHANGE");
+		break;
+	case V4L2_EVENT_MOTION_DET:
+		GST_DEBUG("V4L2_EVENT_SOURCE_DET");
+		break;
+	case V4L2_EVENT_PRIVATE_START:
+		GST_DEBUG("V4L2_EVENT_PRIVATE_START");
+		break;
+	default:
+		GST_ERROR("unsupported V4L2_EVENT types");
+		break;
+	}
 	return 0;
 }
 
