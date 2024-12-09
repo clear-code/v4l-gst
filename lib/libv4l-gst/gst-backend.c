@@ -3345,7 +3345,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
-		ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3409,7 +3409,7 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
-		ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
