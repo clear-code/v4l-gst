@@ -3284,8 +3284,45 @@ int g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 	return 0;
 }
 
+static int
+set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
+{
+	int ret = 0;
+	GstStateChangeReturn state_ret;
+	g_mutex_lock(&priv->dev_lock);
+
+	switch (state) {
+	case GST_STATE_PAUSED:
+		ret = gst_element_set_state(priv->pipeline, state);
+		while (state_ret == GST_STATE_CHANGE_ASYNC) {
+			/* This API blocks up to the ASYNC state change completion. */
+			g_mutex_unlock(&priv->dev_lock);
+			state_ret = gst_element_get_state(priv->pipeline, NULL,
+							  NULL,
+							  GST_CLOCK_TIME_NONE);
+			g_mutex_lock(&priv->dev_lock);
+		}
+
+		if (state_ret != GST_STATE_CHANGE_SUCCESS) {
+			GST_ERROR("Failed to stop pipeline (ret:%s)",
+				  gst_element_state_change_return_get_name(state_ret));
+                        errno = EINVAL;
+			ret = -1;
+		}
+		g_mutex_unlock(&priv->dev_lock);
+	default:
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported GstState to set %s", gst_element_state_get_name(state));
+		break;
+	}
+	return ret;
+}
+
 int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
+	int ret = 0;
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_TRY_DECODER_CMD")) {
@@ -3306,6 +3343,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 	case V4L2_DEC_CMD_STOP:
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_STOP");
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
+		ret = set_decoder_cmd_stop(priv);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_PAUSE");
@@ -3320,7 +3358,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 		GST_DEBUG("unsupported v4l2_decoder_cmd cmd: 0x%x", decoder_cmd->cmd);
 		break;
 	}
-	return 0;
+	return ret;
 }
 
 int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event_subscription *subscription)
@@ -3343,6 +3381,9 @@ int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event
 
 int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
+	int ret = 0;
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_DECODER_CMD")) {
@@ -3353,9 +3394,36 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 		return 0;
 	}
 #endif
-	GST_INFO("unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
-		 decoder_cmd->cmd, decoder_cmd->flags);
+	switch (decoder_cmd->cmd) {
+	case V4L2_DEC_CMD_START:
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+                	      "v4l2_decoder_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
+			      decoder_cmd->start.speed, decoder_cmd->start.format);
+		break;
+	case V4L2_DEC_CMD_STOP:
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
+		ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		break;
+	case V4L2_DEC_CMD_PAUSE:
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_PAUSE");
+		break;
+	case V4L2_DEC_CMD_RESUME:
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_RESUME");
+		break;
+	case V4L2_DEC_CMD_FLUSH:
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_FLUSH");
+		break;
+	default:
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
+                              decoder_cmd->cmd, decoder_cmd->flags);
+		break;
+	}
 
-	return 0;
+	return ret;
 }
 
