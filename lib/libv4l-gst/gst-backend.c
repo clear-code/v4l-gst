@@ -3319,12 +3319,29 @@ static int
 set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 {
 	int ret = 0;
+	GstState current_state;
 	GstStateChangeReturn state_ret;
-	g_mutex_lock(&priv->dev_lock);
 
 	switch (state) {
 	case GST_STATE_PAUSED:
-		ret = gst_element_set_state(priv->pipeline, state);
+		state_ret = gst_element_get_state(priv->pipeline, &current_state,
+						  NULL,
+						  GST_CLOCK_TIME_NONE);
+		while (state_ret == GST_STATE_CHANGE_ASYNC) {
+			state_ret = gst_element_get_state(priv->pipeline, &current_state,
+							  NULL,
+							  GST_CLOCK_TIME_NONE);
+		}
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "Current pipeline state (ret:0x%x)", current_state);
+		if (current_state != GST_STATE_READY ||
+		    current_state != GST_STATE_PLAYING) {
+			GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+				      "Current state is not READY nor PLAYING, so do not set GST_STATE_PAUSED explicitly");
+			return 0;
+		}
+		g_mutex_lock(&priv->dev_lock);
+		state_ret = gst_element_set_state(priv->pipeline, state);
 		while (state_ret == GST_STATE_CHANGE_ASYNC) {
 			/* This API blocks up to the ASYNC state change completion. */
 			g_mutex_unlock(&priv->dev_lock);
@@ -3335,12 +3352,14 @@ set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 		}
 
 		if (state_ret != GST_STATE_CHANGE_SUCCESS) {
-			GST_ERROR("Failed to stop pipeline (ret:%s)",
-				  gst_element_state_change_return_get_name(state_ret));
+			GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+				      "Failed to stop pipeline (ret:%s)",
+				      gst_element_state_change_return_get_name(state_ret));
                         errno = EINVAL;
 			ret = -1;
 		}
 		g_mutex_unlock(&priv->dev_lock);
+		break;
 	default:
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
 			      "unsupported GstState to set %s", gst_element_state_get_name(state));
@@ -3376,7 +3395,7 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
-		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3440,7 +3459,7 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
-		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
