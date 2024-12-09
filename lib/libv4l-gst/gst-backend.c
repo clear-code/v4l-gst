@@ -3403,7 +3403,7 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-                	      "v4l2_decoder_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
 			      decoder_cmd->start.speed, decoder_cmd->start.format);
 		break;
 	case V4L2_DEC_CMD_STOP:
