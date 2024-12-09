@@ -3333,29 +3333,35 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 		return 0;
 	}
 #endif
-	GST_INFO("unsupported VIDIOC_TRY_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x", decoder_cmd->cmd, decoder_cmd->flags);
+	GST_INFO("unsupported VIDIOC_TRY_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
+		 decoder_cmd->cmd, decoder_cmd->flags);
 
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START");
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %d format: %x", decoder_cmd->start.speed, decoder_cmd->start.format);
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			  "v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
+			   decoder_cmd->start.speed, decoder_cmd->start.format);
 		break;
 	case V4L2_DEC_CMD_STOP:
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_STOP");
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
 		ret = set_decoder_cmd_stop(priv);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_PAUSE");
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_PAUSE");
 		break;
 	case V4L2_DEC_CMD_RESUME:
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_RESUME");
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_RESUME");
 		break;
 	case V4L2_DEC_CMD_FLUSH:
-		GST_DEBUG("v4l2_dec_cmd: V4L2_DEC_CMD_FLUSH");
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_FLUSH");
 		break;
 	default:
-		GST_DEBUG("unsupported v4l2_decoder_cmd cmd: 0x%x", decoder_cmd->cmd);
+		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
+			      "unsupported v4l2_decoder_cmd cmd: 0x%x", decoder_cmd->cmd);
 		break;
 	}
 	return ret;
@@ -3387,9 +3393,9 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_DECODER_CMD")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
-			      decoder_cmd->cmd, decoder_cmd->flags);
+		GST_ERROR(v4l_gst_ioctl_debug_category,
+			  "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
+			  decoder_cmd->cmd, decoder_cmd->flags);
 		errno = ENOTTY;
 		return 0;
 	}
