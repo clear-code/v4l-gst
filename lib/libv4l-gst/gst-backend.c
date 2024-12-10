@@ -724,6 +724,17 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 	return GST_PAD_PROBE_OK;
 }
 
+void
+appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
+{
+	struct gst_backend_priv *priv = data;
+
+	GST_DEBUG("clear probe_id");
+	priv->probe_id = 0;
+
+	g_signal_handlers_disconnect_by_func(self, appsink_pad_unlinked_cb, data);
+}
+
 static gulong
 setup_query_pad_probe(struct gst_backend_priv *priv)
 {
@@ -731,6 +742,8 @@ setup_query_pad_probe(struct gst_backend_priv *priv)
 	gulong probe_id;
 
 	peer_pad = get_peer_pad(priv->appsink, "sink");
+        g_signal_connect(G_OBJECT(peer_pad), "unlinked",
+                         G_CALLBACK(appsink_pad_unlinked_cb), priv);
 	probe_id = gst_pad_add_probe(peer_pad,
 				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
 				     (GstPadProbeCallback) pad_probe_query,
@@ -954,9 +967,12 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
+	GST_DEBUG("gst_backend_deinit start");
+
 	g_mutex_clear(&priv->dev_lock);
 
-	remove_query_pad_probe(priv->appsink, priv->probe_id);
+	if (priv->probe_id)
+		remove_query_pad_probe(priv->appsink, priv->probe_id);
 
 	if (priv->out_buffers)
 		g_free(priv->out_buffers);
@@ -979,6 +995,8 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	g_cond_clear(&priv->cap_reqbuf_cond);
 
 	gst_object_unref(priv->pipeline);
+
+	GST_DEBUG("gst_backend_deinit end");
 }
 
 int
@@ -2713,6 +2731,7 @@ set_cap_format_to_pipeline(struct gst_backend_priv *priv)
 		ret = FALSE;
 		goto free_objects;
 	}
+	GST_DEBUG("appsink element is relinked");
 
 	ret = TRUE;
 
