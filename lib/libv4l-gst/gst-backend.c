@@ -2282,9 +2282,13 @@ flush_buffer_queues:
 	ret = force_out_dqbuf(priv);
 	if (ret < 0)
 		return ret;
+#if 0
+	/* TODO: Need to check whether it's not really needed, removing it seems
+	   make everything quit stable though. */
 	ret = force_cap_dqbuf(priv);
 	if (ret < 0)
 		return ret;
+#endif
 
 	/* The reference counted up below will be unreffed when calling
 	   the streamon ioctl. This prevents from returning all the buffers
