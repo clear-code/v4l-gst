@@ -2787,6 +2787,10 @@ streamon_ioctl_out(struct gst_backend_priv *priv)
 
 	g_mutex_unlock(&priv->dev_lock);
 
+        GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(priv->pipeline),
+                                          GST_DEBUG_GRAPH_SHOW_ALL,
+                                          "v4l-gst.snapshot");
+
 	return 0;
 }
 
