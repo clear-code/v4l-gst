@@ -711,14 +711,25 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 	        set_event(priv->dev_ops_priv->event_state, POLLOUT);
 		wait_for_cap_reqbuf_invocation(priv);
 
+		/* Even if a min value is set here, omxvideodec will reset it
+		   with an internally calculated value. It's at least 4 and
+		   possible to become larger than max. When it's calculated as
+		   larger than max, bufferpool will fail to allocate.
+		   To ensure to avoid it, we set the smallest possible value 0
+		   here.
+		   ref: https://github.com/renesas-rcar/gst-omx/blob/37296f66e3392d8dcdcdae14b89b05dd7507dc39/omx/gstomxvideodec.c#L920
+
+		   On RZ/G2, you can use `omx-outbufs` property of omxvideodec
+		   to override it.
+		   e.g.)
+		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
+		 */
 		set_buffer_pool_params(priv->sink_pool, caps, info.size,
-				       priv->cap_buffers_num - 4, /* XXX */
-				       priv->cap_buffers_num);
+				       0, priv->cap_buffers_num);
 
 		gst_query_add_allocation_pool(query, priv->sink_pool,
 					      info.size,
-					      priv->cap_buffers_num - 4, /* XXX */
-					      priv->cap_buffers_num);
+					      0, priv->cap_buffers_num);
 	}
 
 	return GST_PAD_PROBE_OK;
