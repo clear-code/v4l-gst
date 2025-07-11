@@ -2014,6 +2014,17 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	return ret;
 }
 
+static void
+fourcc_to_string(uint32_t fourcc, gchar out[5])
+{
+	uint32_t fourcc_le = GUINT32_TO_LE(fourcc);
+	out[0] = (gchar)((fourcc_le >> 0)  & 0xff);
+	out[1] = (gchar)((fourcc_le >> 8)  & 0xff);
+	out[2] = (gchar)((fourcc_le >> 16) & 0xff);
+	out[3] = (gchar)((fourcc_le >> 24) & 0xff);
+	out[4] = '\0';
+}
+
 static GstCaps *
 get_codec_caps_from_fourcc(guint fourcc)
 {
@@ -2021,7 +2032,10 @@ get_codec_caps_from_fourcc(guint fourcc)
 
 	mime = convert_codec_type_v4l2_to_gst(fourcc);
 	if (!mime) {
-		GST_ERROR("Failed to convert from fourcc to mime string");
+		gchar fourcc_str[5];
+		fourcc_to_string(fourcc, fourcc_str);
+		GST_ERROR("Failed to convert from fourcc to mime string: %u (\"%s\")",
+			  fourcc, fourcc_str);
 		return NULL;
 	}
 
@@ -2728,7 +2742,10 @@ set_cap_format_to_pipeline(struct gst_backend_priv *priv)
 	fmt = convert_video_format_v4l2_to_gst(priv->
 					       cap_pix_fmt.pixelformat);
 	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
-		GST_ERROR("Invalid format on CAPTURE");
+		gchar fourcc_str[5];
+		fourcc_to_string(priv->cap_pix_fmt.pixelformat, fourcc_str);
+		GST_ERROR("Invalid format on CAPTURE: %u (\"%s\")",
+			  priv->cap_pix_fmt.pixelformat, fourcc_str);
 		errno = EINVAL;
 		return FALSE;
 	}
