@@ -1238,15 +1238,27 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	return ret;
 }
 
+static void
+fourcc_to_string(uint32_t fourcc, gchar out[5])
+{
+	uint32_t fourcc_le = GUINT32_TO_LE(fourcc);
+	out[0] = (gchar)((fourcc_le >> 0)  & 0xff);
+	out[1] = (gchar)((fourcc_le >> 8)  & 0xff);
+	out[2] = (gchar)((fourcc_le >> 16) & 0xff);
+	out[3] = (gchar)((fourcc_le >> 24) & 0xff);
+	out[4] = '\0';
+}
+
 int
 enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	struct fmts *fmts;
 	gint fmts_num;
+	gchar fourcc_str[5];
 
-	GST_DEBUG("VIDIOC_ENUM_FMT:enum_fmt_ioctl: type: 0x%x index: %d flags:0x%x description: %s pixelformat: 0x%x",
-		  desc->type, desc->index, desc->flags, desc->description, desc->pixelformat);
+	GST_DEBUG("VIDIOC_ENUM_FMT:enum_fmt_ioctl: type: 0x%x index: %d",
+		  desc->type, desc->index);
 
 	if (!priv->out_fmts || !priv->cap_fmts) {
 		GST_ERROR("Supported formats lists are not prepared");
@@ -1269,6 +1281,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	}
 
 	if (fmts_num <= desc->index) {
+		GST_DEBUG("  Index %u is out of range", desc->index);
 		errno = EINVAL;
 		return -1;
 	}
@@ -1277,9 +1290,13 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	g_strlcpy((gchar *)desc->description, fmts[desc->index].fmt_char,
 		   sizeof(desc->description));
 	memset(desc->reserved, 0, sizeof(desc->reserved));
+	fourcc_to_string(desc->pixelformat, fourcc_str);
+	GST_DEBUG("  description: %s pixelformat: %s (0x%x)",
+		  desc->description, fourcc_str, desc->pixelformat);
 
 	return 0;
 }
+
 int
 enum_framesizes_ioctl (struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp) {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
@@ -2012,17 +2029,6 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	g_mutex_unlock(&priv->dev_lock);
 
 	return ret;
-}
-
-static void
-fourcc_to_string(uint32_t fourcc, gchar out[5])
-{
-	uint32_t fourcc_le = GUINT32_TO_LE(fourcc);
-	out[0] = (gchar)((fourcc_le >> 0)  & 0xff);
-	out[1] = (gchar)((fourcc_le >> 8)  & 0xff);
-	out[2] = (gchar)((fourcc_le >> 16) & 0xff);
-	out[3] = (gchar)((fourcc_le >> 24) & 0xff);
-	out[4] = '\0';
 }
 
 static GstCaps *
