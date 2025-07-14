@@ -1298,10 +1298,13 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 }
 
 int
-enum_framesizes_ioctl (struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp) {
+enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp)
+{
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
-	GST_DEBUG("VIDIOC_ENUM_FRAMESIZES:enum_framesizes_ioctl: type: 0x%x index: %d pixel_format: 0x%x", argp->type, argp->index, argp->pixel_format);
+	GST_DEBUG("VIDIOC_ENUM_FRAMESIZES:enum_framesizes_ioctl:"
+		  " type: 0x%x index: %d pixel_format: 0x%x",
+		  argp->type, argp->index, argp->pixel_format);
 
 	switch (argp->pixel_format) {
         case V4L2_PIX_FMT_GREY:
