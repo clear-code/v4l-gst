@@ -1303,8 +1303,8 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
 	GST_DEBUG("VIDIOC_ENUM_FRAMESIZES:"
-		  " type: 0x%x index: %d pixel_format: 0x%x",
-		  argp->type, argp->index, argp->pixel_format);
+		  " index: %d pixel_format: 0x%x",
+		  argp->index, argp->pixel_format);
 
 	switch (argp->pixel_format) {
         case V4L2_PIX_FMT_GREY:
