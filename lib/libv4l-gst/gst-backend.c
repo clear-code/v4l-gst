@@ -3202,8 +3202,8 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 	}
 #endif
 
-	GST_INFO("unsupported VIDIOC_QUERYMENU query_menu id: %x", query_menu->id);
-	GST_INFO("unsupported query_menu index: %x", query_menu->index);
+	GST_DEBUG("VIDIOC_QUERYMENU query_menu id: %x", query_menu->id);
+	GST_DEBUG("query_menu index: %x", query_menu->index);
 
 	switch (query_menu->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
@@ -3218,7 +3218,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 			errno = EINVAL;
 			return -1;
 		}
-		GST_ERROR("V4L2_CID_MPEG_VIDEO_H264_PROFILE index: %x", query_menu->index);
+		GST_DEBUG("V4L2_CID_MPEG_VIDEO_H264_PROFILE index: %x", query_menu->index);
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
 		switch (query_menu->index) {
@@ -3230,7 +3230,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 			errno = EINVAL;
 			return -1;
 		}
-		GST_ERROR("V4L2_CID_MPEG_VIDEO_HEVC_PROFILE index: %x", query_menu->index);
+		GST_DEBUG("V4L2_CID_MPEG_VIDEO_HEVC_PROFILE index: %x", query_menu->index);
 		break;
 #if 0 // omit non-supported AV1, VP8, VP9
 	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
@@ -3239,7 +3239,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 			errno = EINVAL;
 			return -1;
 		}
-		GST_ERROR("V4L2_CID_MPEG_VIDEO_AV1_PROFILE index: %x", query_menu->index);
+		GST_DEBUG("V4L2_CID_MPEG_VIDEO_AV1_PROFILE index: %x", query_menu->index);
 		break;
 	case V4L2_CID_MPEG_VIDEO_VP8_PROFILE:
 		if (query_menu->index != V4L2_MPEG_VIDEO_VP8_PROFILE_0) {
@@ -3247,7 +3247,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 			errno = EINVAL;
 			return -1;
 		}
-		GST_ERROR("V4L2_CID_MPEG_VIDEO_VP8_PROFILE index: %x", query_menu->index);
+		GST_DEBUG("V4L2_CID_MPEG_VIDEO_VP8_PROFILE index: %x", query_menu->index);
 		break;
 	case V4L2_CID_MPEG_VIDEO_VP9_PROFILE:
 		switch (query_menu->index) {
@@ -3259,7 +3259,7 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 			errno = EINVAL;
 			return -1;
 		}
-		GST_ERROR("V4L2_CID_MPEG_VIDEO_VP9_PROFILE index: %x", query_menu->index);
+		GST_DEBUG("V4L2_CID_MPEG_VIDEO_VP9_PROFILE index: %x", query_menu->index);
 		break;
 #endif
 	default:
