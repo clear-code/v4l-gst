@@ -157,6 +157,55 @@ static const struct v4l_gst_format_info v4l_gst_vid_fmt_tbl[] = {
 	{ V4L2_PIX_FMT_NV12MT, GST_VIDEO_FORMAT_NV12_64Z32 },
 };
 
+static void
+fourcc_to_string(uint32_t fourcc, gchar out[5])
+{
+	uint32_t fourcc_le = GUINT32_TO_LE(fourcc);
+	out[0] = (gchar)((fourcc_le >> 0)  & 0xff);
+	out[1] = (gchar)((fourcc_le >> 8)  & 0xff);
+	out[2] = (gchar)((fourcc_le >> 16) & 0xff);
+	out[3] = (gchar)((fourcc_le >> 24) & 0xff);
+	out[4] = '\0';
+}
+
+static const gchar*
+buffer_type_to_string(guint type)
+{
+	switch (type) {
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+		return "VIDEO_CAPTURE";
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+		return "VIDEO_OUTPUT";
+	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
+		return "VIDEO_OVERLAY";
+	case V4L2_BUF_TYPE_VBI_CAPTURE:
+		return "VBI_CAPTURE";
+	case V4L2_BUF_TYPE_VBI_OUTPUT:
+		return "VBI_OUTPUT";
+	case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
+		return "SLICED_VBI_CAPTURE";
+	case V4L2_BUF_TYPE_SLICED_VBI_OUTPUT:
+		return "SLICED_VBI_OUTPUT";
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY:
+		return "VIDEO_OUTPUT_OVERLAY";
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+		return "VIDEO_CAPTURE_MPLANE";
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+		return "VIDEO_OUTPUT_MPLANE";
+	case V4L2_BUF_TYPE_SDR_CAPTURE:
+		return "SDR_CAPTURE";
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		return "SDR_OUTPUT";
+	case V4L2_BUF_TYPE_META_CAPTURE:
+		return "META_CAPTURE";
+	case V4L2_BUF_TYPE_META_OUTPUT:
+		return "META_OUTPUT";
+	default:
+		return NULL;
+	}
+}
+
+
 static gboolean
 parse_conf_settings(gchar **pipeline_str, gchar **pool_lib_path,
 		    gint *min_buffers, gint *max_width, gint *max_height)
@@ -1138,7 +1187,8 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_S_FMT: type: 0x%x", fmt->type);
+	GST_DEBUG("VIDIOC_S_FMT: type: %s (0x%x)",
+		  buffer_type_to_string(fmt->type), fmt->type);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1216,7 +1266,8 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	struct v4l2_pix_format_mplane *pix_fmt;
 	int ret;
 
-	GST_DEBUG("VIDIOC_G_FMT: type: 0x%x", fmt->type);
+	GST_DEBUG("VIDIOC_G_FMT: type: %s (0x%x)",
+		  buffer_type_to_string(fmt->type), fmt->type);
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
@@ -1238,17 +1289,6 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	return ret;
 }
 
-static void
-fourcc_to_string(uint32_t fourcc, gchar out[5])
-{
-	uint32_t fourcc_le = GUINT32_TO_LE(fourcc);
-	out[0] = (gchar)((fourcc_le >> 0)  & 0xff);
-	out[1] = (gchar)((fourcc_le >> 8)  & 0xff);
-	out[2] = (gchar)((fourcc_le >> 16) & 0xff);
-	out[3] = (gchar)((fourcc_le >> 24) & 0xff);
-	out[4] = '\0';
-}
-
 int
 enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 {
@@ -1257,8 +1297,8 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	gint fmts_num;
 	gchar fourcc_str[5];
 
-	GST_DEBUG("VIDIOC_ENUM_FMT: type: 0x%x index: %d",
-		  desc->type, desc->index);
+	GST_DEBUG("VIDIOC_ENUM_FMT: type: %s (0x%x) index: %d",
+		  buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (!priv->out_fmts || !priv->cap_fmts) {
 		GST_ERROR("Supported formats lists are not prepared");
@@ -1675,7 +1715,9 @@ qbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_TRACE("VIDIOC_QBUF: type: 0x%x index: %d flags: 0x%x", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_QBUF: type: %s (0x%x) index: %d flags: 0x%x",
+		  buffer_type_to_string(buf->type), buf->type,
+		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1965,7 +2007,9 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_TRACE("VIDIOC_DQBUF: type: 0x%x index: %d flags: 0x%x", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_DQBUF: type: %s (0x%x) index: %d flags: 0x%x",
+		  buffer_type_to_string(buf->type), buf->type,
+		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -2004,7 +2048,9 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	GstBufferPool *pool;
 	int ret;
 
-	GST_TRACE("VIDIOC_QUERYBUF: type: 0x%x index: %d flags: 0x%x", buf->type, buf->index, buf->flags);
+	GST_TRACE("VIDIOC_QUERYBUF: type: %s (0x%x) index: %d flags: 0x%x",
+		  buffer_type_to_string(buf->type), buf->type,
+		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -2702,7 +2748,9 @@ reqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_requestbuffers *req)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_REQBUF: type: 0x%x count: %d memory: 0x%x", req->type, req->count, req->memory);
+	GST_DEBUG("VIDIOC_REQBUF: type: %s (0x%x) count: %d memory: 0x%x",
+		  buffer_type_to_string(req->type), req->type,
+		  req->count, req->memory);
 
 	if (req->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = reqbuf_ioctl_out(priv, req);
@@ -2839,13 +2887,12 @@ streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_STREAMON: type: 0x%x", *type);
+	GST_DEBUG("VIDIOC_STREAMON: type: %s (0x%x)",
+		  buffer_type_to_string(*type), *type);
 
 	if (*type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		GST_DEBUG("on OUTPUT");
 		ret = streamon_ioctl_out(priv);
 	} else if (*type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		GST_DEBUG("on CAPTURE");
 		/* no processing */
 		ret = 0;
 	} else {
@@ -2863,7 +2910,8 @@ streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
-	GST_DEBUG("VIDIOC_STREAMOFF: type: 0x%x", *type);
+	GST_DEBUG("VIDIOC_STREAMOFF: type: %s (0x%x)",
+		  buffer_type_to_string(*type), *type);
 
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(priv->pipeline),
 					  GST_DEBUG_GRAPH_SHOW_ALL,
@@ -2889,7 +2937,8 @@ int
 subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		      struct v4l2_event_subscription *sub)
 {
-	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT: type: 0x%x id: %d flags: 0x%x", sub->type, sub->id, sub->flags);
+	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT: type: 0x%x id: %d flags: 0x%x",
+		  sub->type, sub->id, sub->flags);
 
 	switch(sub->type) {
 	case V4L2_EVENT_ALL:
@@ -3311,6 +3360,7 @@ try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
 int
 g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 {
+	const gchar *buf_type;
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_CROP")) {
@@ -3324,52 +3374,11 @@ g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 
 	GST_INFO("unsupported VIDIOC_G_CROP v4l2_crop type: 0x%x", crop->type);
 
-	switch (crop->type) {
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_CAPTURE");
-		break;
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT");
-		break;
-	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OVERLAY");
-		break;
-	case V4L2_BUF_TYPE_VBI_CAPTURE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VBI_CAPTURE");
-		break;
-	case V4L2_BUF_TYPE_VBI_OUTPUT:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VBI_OUTPUT");
-		break;
-	case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_SLICED_VBI_CAPTURE");
-		break;
-	case V4L2_BUF_TYPE_SLICED_VBI_OUTPUT:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_SLICED_VBI_OUTPUT");
-		break;
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY");
-		break;
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE");
-		break;
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE");
-		break;
-	case V4L2_BUF_TYPE_SDR_CAPTURE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_SDR_CAPTURE");
-		break;
-	case V4L2_BUF_TYPE_SDR_OUTPUT:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_SDR_OUTPUT");
-		break;
-	case V4L2_BUF_TYPE_META_CAPTURE:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_META_CAPTURE");
-		break;
-	case V4L2_BUF_TYPE_META_OUTPUT:
-		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_META_OUTPUT");
-		break;
-	default:
+	buf_type = buffer_type_to_string(crop->type);
+	if (buf_type) {
+		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_%s", buf_type);
+	} else {
 		GST_DEBUG("unsupported v4l2_crop type: 0x%x", crop->type);
-		break;
 	}
 	GST_DEBUG("v4l2_crop rect: left:%d top:%d width: %u height: %u",
 		crop->c.left, crop->c.top, crop->c.width, crop->c.height);
@@ -3538,4 +3547,3 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 	return ret;
 }
-
