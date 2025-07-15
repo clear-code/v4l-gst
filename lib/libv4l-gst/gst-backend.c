@@ -1146,6 +1146,9 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 
 	set_params_as_encoded_stream(pix_fmt);
 
+	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts_num > 0)
+		priv->cap_pix_fmt.pixelformat =	priv->cap_fmts[0].fmt;
+
 	return 0;
 }
 
