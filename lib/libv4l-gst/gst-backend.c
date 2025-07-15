@@ -964,8 +964,12 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->dev_ops_priv = dev_ops_priv;
 
 	gst_init(NULL, NULL);
-        GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category, "v4l-gst", 0, "debug category for v4l-gst application");
-        GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category, "v4l-gst-ioctl", 0, "debug category for v4l-gst IOCTL operation");
+        GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
+				"v4l-gst", 0,
+				"debug category for v4l-gst application");
+        GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
+				"v4l-gst-ioctl", 0,
+				"debug category for v4l-gst IOCTL operation");
 
 	if (!parse_conf_settings(&pipeline_str, &pool_lib_path,
 				 &priv->cap_min_buffers,
@@ -1063,7 +1067,8 @@ int
 querycap_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_capability *cap)
 {
 #if 0
-	GST_DEBUG("VIDIOC_QUERYCAP driver: %s card: %s bus_info: %s version: %s", cap->driver, cap->card, cap->bus_info, cap->version);
+	GST_DEBUG("VIDIOC_QUERYCAP driver: %s card: %s bus_info: %s version: %s",
+		  cap->driver, cap->card, cap->bus_info, cap->version);
 #else
 	GST_DEBUG("VIDIOC_QUERYCAP");
 #endif
