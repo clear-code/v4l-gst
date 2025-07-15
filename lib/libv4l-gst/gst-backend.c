@@ -2271,6 +2271,7 @@ force_out_dqbuf(struct gst_backend_priv *priv)
 	return 0;
 }
 
+#if 0
 static int
 force_cap_dqbuf(struct gst_backend_priv *priv)
 {
@@ -2312,6 +2313,7 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 
 	return 0;
 }
+#endif
 
 static int
 flush_pipeline(struct gst_backend_priv *priv)
@@ -2812,7 +2814,7 @@ set_cap_format_to_pipeline(struct gst_backend_priv *priv)
 		gchar fourcc_str[5];
 		fourcc_to_string(priv->cap_pix_fmt.pixelformat, fourcc_str);
 		GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
-			  priv->cap_pix_fmt.pixelformat, fourcc_str);
+			  fourcc_str, priv->cap_pix_fmt.pixelformat);
 		errno = EINVAL;
 		return FALSE;
 	}
@@ -3394,6 +3396,7 @@ g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 	return 0;
 }
 
+#if 0
 static int
 set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 {
@@ -3428,13 +3431,13 @@ set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 	}
 	return ret;
 }
+#endif
 
 int
 try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		      struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3509,7 +3512,6 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		  struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
