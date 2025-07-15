@@ -3081,14 +3081,17 @@ unlock:
 	return map;
 }
 
-int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
-		 struct v4l2_exportbuffer *expbuf) {
+int
+expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
+	     struct v4l2_exportbuffer *expbuf)
+{
 	struct v4l_gst_buffer *buffer;
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	guint i = 0;
 	GstMemory *mem = NULL;
 
-	GST_TRACE("VIDIOC_EXPBUF: type: 0x%x index: %d flags: 0x%x", expbuf->type, expbuf->index, expbuf->flags);
+	GST_TRACE("VIDIOC_EXPBUF: type: 0x%x index: %d flags: 0x%x",
+		  expbuf->type, expbuf->index, expbuf->flags);
 
 	if ((expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) ||
 	    (expbuf->type == V4L2_BUF_TYPE_PRIVATE)) {
@@ -3126,18 +3129,23 @@ int expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	return 0;
 }
 
-int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *selection) {
+int
+g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv,
+		  struct v4l2_selection *selection)
+{
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_SELECTION")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_G_SELECTION");
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_G_SELECTION");
 		errno = ENOTTY;
 		return 0;
 	}
 #endif
-	GST_DEBUG("VIDIOC_G_SELECTION: type: 0x%x target: 0x%x flags: 0x%x", selection->type, selection->target, selection->flags);
+	GST_DEBUG("VIDIOC_G_SELECTION: type: 0x%x target: 0x%x flags: 0x%x",
+		  selection->type, selection->target, selection->flags);
 
 	selection->r.top = selection->r.left = 0;
 	selection->r.width = priv->cap_pix_fmt.width;
@@ -3147,12 +3155,17 @@ int g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_selection *
 }
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
-int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *query_ctrl) {
+int
+queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
+		struct v4l2_queryctrl *query_ctrl)
+{
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_QUERYCTRL")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_QUERYCTRL: id: 0x%x", query_ctrl->id);
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_QUERYCTRL: id: 0x%x",
+			      query_ctrl->id);
 		errno = ENOTTY;
 		return 0;
 	}
@@ -3193,12 +3206,16 @@ int queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_queryctrl *qu
 }
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L778-L842 */
-int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu) {
+int
+querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu)
+{
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_QUERYMENU")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_QUERYMENU query_menu id: 0x%x", query_menu->id);
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_QUERYMENU query_menu id: 0x%x",
+			      query_menu->id);
 		errno = ENOTTY;
 		return 0;
 	}
@@ -3273,12 +3290,15 @@ int querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *qu
 }
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
-int try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
+int
+try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_TRY_FMT")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x", format->type);
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x",
+			      format->type);
 		errno = ENOTTY;
 		return 0;
 	}
@@ -3288,12 +3308,15 @@ int try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
 	return 0;
 }
 
-int g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
+int
+g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_CROP")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_G_EXT_CTRLS v4l2_crop type: 0x%x", crop->type);
+		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
+			      "unsupported VIDIOC_G_EXT_CTRLS v4l2_crop type: 0x%x",
+			      crop->type);
 		errno = ENOTTY;
 		return 0;
 	}
@@ -3382,13 +3405,16 @@ set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 		g_mutex_unlock(&priv->dev_lock);
 	default:
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported GstState to set %s", gst_element_state_get_name(state));
+			      "unsupported GstState to set %s",
+			      gst_element_state_get_name(state));
 		break;
 	}
 	return ret;
 }
 
-int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
+int
+try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
+		      struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
@@ -3414,7 +3440,8 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 		break;
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu",
+			      decoder_cmd->stop.pts);
 		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
@@ -3431,20 +3458,25 @@ int try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder
 		break;
 	default:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-			      "unsupported v4l2_decoder_cmd cmd: 0x%x", decoder_cmd->cmd);
+			      "unsupported v4l2_decoder_cmd cmd: 0x%x",
+			      decoder_cmd->cmd);
 		break;
 	}
 	return ret;
 }
 
-int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event_subscription *subscription)
+int
+unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
+			struct v4l2_event_subscription *subscription)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_UNSCBSCRIBE_EVENT")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
 			      "unsupported VIDIOC_UNSUBSCRIBE_EVENT v4l2_event_subscription: type: 0x%x id: 0x%x flags: 0x%x",
-			      subscription->type, subscription->id, subscription->flags);
+			      subscription->type,
+			      subscription->id,
+			      subscription->flags);
 		errno = ENOTTY;
 		return 0;
 	}
@@ -3455,7 +3487,9 @@ int unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event
 	return 0;
 }
 
-int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd *decoder_cmd)
+int
+decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
+		  struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
@@ -3474,11 +3508,13 @@ int decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_decoder_cmd
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
-			      decoder_cmd->start.speed, decoder_cmd->start.format);
+			      decoder_cmd->start.speed,
+			      decoder_cmd->start.format);
 		break;
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu", decoder_cmd->stop.pts);
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu",
+			      decoder_cmd->stop.pts);
 		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
