@@ -1301,10 +1301,12 @@ int
 enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+	gchar fourcc_str[5];
 
+	fourcc_to_string(argp->pixel_format, fourcc_str);
 	GST_DEBUG("VIDIOC_ENUM_FRAMESIZES:"
-		  " index: %d pixel_format: 0x%x",
-		  argp->index, argp->pixel_format);
+		  " index: %d pixel_format: %s (0x%x)",
+		  argp->index, fourcc_str, argp->pixel_format);
 
 	switch (argp->pixel_format) {
         case V4L2_PIX_FMT_GREY:
@@ -2753,7 +2755,7 @@ set_cap_format_to_pipeline(struct gst_backend_priv *priv)
 	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
 		gchar fourcc_str[5];
 		fourcc_to_string(priv->cap_pix_fmt.pixelformat, fourcc_str);
-		GST_ERROR("Invalid format on CAPTURE: %u (\"%s\")",
+		GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
 			  priv->cap_pix_fmt.pixelformat, fourcc_str);
 		errno = EINVAL;
 		return FALSE;
