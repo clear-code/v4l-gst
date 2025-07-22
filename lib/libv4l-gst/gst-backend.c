@@ -120,7 +120,11 @@ struct gst_backend_priv {
 	gint max_width;
 	gint max_height;
 
-        gint out_cnt;
+	gint out_cnt;
+
+	guint32 event_sequence;
+	gint subscribed_events;
+	GQueue *event_queue;
 };
 
 struct v4l_gst_format_info {
@@ -205,6 +209,30 @@ buffer_type_to_string(guint type)
 	}
 }
 
+static const gchar*
+event_type_to_string(guint type)
+{
+	switch (type) {
+	case V4L2_EVENT_ALL:
+		return "V4L2_EVENT_ALL";
+	case V4L2_EVENT_VSYNC:
+		return "V4L2_EVENT_SYNC";
+	case V4L2_EVENT_EOS:
+		return "V4L2_EVENT_EOS";
+	case V4L2_EVENT_CTRL:
+		return "V4L2_EVENT_CTRL";
+	case V4L2_EVENT_FRAME_SYNC:
+		return "V4L2_EVENT_FRAME_SYNC";
+	case V4L2_EVENT_SOURCE_CHANGE:
+		return "V4L2_EVENT_SOURCE_CHANGE";
+	case V4L2_EVENT_MOTION_DET:
+		return "V4L2_EVENT_SOURCE_DET";
+	case V4L2_EVENT_PRIVATE_START:
+		return "V4L2_EVENT_PRIVATE_START";
+	default:
+		return NULL;
+	}
+}
 
 static gboolean
 parse_conf_settings(gchar **pipeline_str, gchar **pool_lib_path,
@@ -993,6 +1021,10 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 
 	g_mutex_init(&priv->dev_lock);
 
+	priv->event_sequence = 0;
+	priv->subscribed_events = 0;
+	priv->event_queue = g_queue_new();
+
 	dev_ops_priv->gst_priv = priv;
 
 	return 0;
@@ -1034,6 +1066,14 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	GST_DEBUG("gst_backend_deinit start");
 
 	g_mutex_clear(&priv->dev_lock);
+
+	if (priv->event_queue) {
+		g_queue_clear_full(priv->event_queue,
+				   (GDestroyNotify)g_free);
+		priv->event_queue = NULL;
+	}
+
+	priv->subscribed_events = 0;
 
 	if (priv->probe_id)
 		remove_query_pad_probe(priv->appsink, priv->probe_id);
@@ -2945,51 +2985,73 @@ streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 
 int
 subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
-		      struct v4l2_event_subscription *sub)
+		      struct v4l2_event_subscription *subscription)
 {
-	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT: type: 0x%x id: %d flags: 0x%x",
-		  sub->type, sub->id, sub->flags);
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+	int retval = -1;
 
-	switch(sub->type) {
-	case V4L2_EVENT_ALL:
-		GST_DEBUG("V4L2_EVENT_ALL");
-		break;
-	case V4L2_EVENT_VSYNC:
-		GST_DEBUG("V4L2_EVENT_SYNC");
-		break;
-	case V4L2_EVENT_EOS:
-		GST_DEBUG("V4L2_EVENT_EOS");
-		break;
-	case V4L2_EVENT_CTRL:
-		GST_DEBUG("V4L2_EVENT_CTRL");
-		break;
-	case V4L2_EVENT_FRAME_SYNC:
-		GST_DEBUG("V4L2_EVENT_FRAME_SYNC");
-		break;
+	errno = EINVAL;
+	g_return_val_if_fail(dev_ops_priv && priv, retval);
+	g_return_val_if_fail(subscription, retval);
+
+	g_mutex_lock(&priv->dev_lock);
+
+	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT: type: %s (0x%x) id: %d flags: 0x%x",
+		  event_type_to_string(subscription->type), subscription->type,
+		  subscription->id, subscription->flags);
+
+	switch (subscription->type) {
 	case V4L2_EVENT_SOURCE_CHANGE:
-		GST_DEBUG("V4L2_EVENT_SOURCE_CHANGE");
-		break;
-	case V4L2_EVENT_MOTION_DET:
-		GST_DEBUG("V4L2_EVENT_SOURCE_DET");
-		break;
-	case V4L2_EVENT_PRIVATE_START:
-		GST_DEBUG("V4L2_EVENT_PRIVATE_START");
+		/* Chromium supports only this type of event. */
+		priv->subscribed_events |= (1 << V4L2_EVENT_SOURCE_CHANGE);
+		errno = 0;
+		retval = 0;
 		break;
 	default:
-		GST_ERROR("unsupported V4L2_EVENT types");
+		GST_ERROR("unsupported V4L2_EVENT type: %s (type: 0x%x)",
+			  event_type_to_string(subscription->type),
+			  subscription->type);
+		errno = ENOTTY;
 		break;
 	}
-	return 0;
+
+	g_mutex_unlock(&priv->dev_lock);
+
+	return retval;
 }
 
 int
 dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 {
-	/* TODO: Add the implementation for subscribed event notifications.
-		 Always return failure until the feature has been supported. */
-	GST_TRACE("VIDIOC_DQEVENT: id: %d sequence: %d pending: %d", ev->id, ev->sequence, ev->pending);
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+	int retval = -1;
 
-	return -1;
+	GST_TRACE("VIDIOC_DQEVENT");
+
+	errno = EINVAL;
+	g_return_val_if_fail(ev, retval);
+	g_return_val_if_fail(priv, retval);
+
+	g_mutex_lock(&priv->dev_lock);
+
+	if (!priv->event_queue || priv->event_queue->length <= 0) {
+		errno = EAGAIN;
+		goto ERROR;
+	}
+
+	if (priv->subscribed_events & (1 << V4L2_EVENT_SOURCE_CHANGE)) {
+		struct v4l2_event *next = g_queue_pop_head(priv->event_queue);
+		*ev = *next;
+		ev->pending = priv->event_queue->length;
+		g_free(next);
+		errno = 0;
+		retval = 0;
+	}
+
+ ERROR:
+	g_mutex_unlock(&priv->dev_lock);
+
+	return retval;
 }
 
 static int
@@ -3489,22 +3551,38 @@ int
 unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 			struct v4l2_event_subscription *subscription)
 {
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
-	if (vidioc_features && strstr(vidioc_features, "VIDIOC_UNSCBSCRIBE_EVENT")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported VIDIOC_UNSUBSCRIBE_EVENT v4l2_event_subscription: type: 0x%x id: 0x%x flags: 0x%x",
-			      subscription->type,
-			      subscription->id,
-			      subscription->flags);
-		errno = ENOTTY;
-		return 0;
-	}
-#endif
-	GST_INFO("unsupported VIDIOC_UNSUBSCRIBE_EVENT v4l2_event_subscription: type: 0x%x id: 0x%x flags: 0x%x",
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
+	int retval = 0;
+
+	GST_INFO("VIDIOC_UNSUBSCRIBE_EVENT: type: 0x%x id: 0x%x flags: 0x%x",
 		 subscription->type, subscription->id, subscription->flags);
 
-	return 0;
+	g_mutex_lock(&priv->dev_lock);
+
+	errno = 0;
+
+	switch (subscription->type) {
+	case V4L2_EVENT_ALL:
+		/* V4L2_EVENT_ALL is valid only for unsubscribe:
+		   https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/vidioc-dqevent.html#id2
+		 */
+		priv->subscribed_events = 0;
+		break;
+	case V4L2_EVENT_SOURCE_CHANGE:
+		priv->subscribed_events &= ~(1 << V4L2_EVENT_SOURCE_CHANGE);
+		break;
+	default:
+		GST_ERROR("unsupported V4L2_EVENT type: %s (type: 0x%x)",
+			  event_type_to_string(subscription->type),
+			  subscription->type);
+		errno = ENOTTY;
+		retval = -1;
+		break;
+	}
+
+	g_mutex_unlock(&priv->dev_lock);
+
+	return retval;
 }
 
 int
