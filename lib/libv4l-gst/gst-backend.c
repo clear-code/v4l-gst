@@ -125,6 +125,7 @@ struct gst_backend_priv {
 	guint32 event_sequence;
 	gint subscribed_events;
 	GQueue *event_queue;
+	GMutex event_queue_mutex;
 };
 
 struct v4l_gst_format_info {
@@ -703,6 +704,23 @@ get_buffer_pool_params(GstBufferPool *pool, GstCaps **caps, guint *buf_size,
 }
 
 static void
+push_source_change_event(struct gst_backend_priv *priv)
+{
+	struct v4l2_event *event = g_new0(struct v4l2_event, 1);
+
+	event->type = V4L2_EVENT_SOURCE_CHANGE;
+	event->u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION;
+	event->pending = 0;
+	event->sequence = ++priv->event_sequence;
+	event->id = 0;
+	clock_gettime(CLOCK_REALTIME, &event->timestamp);
+
+	g_mutex_lock(&priv->event_queue_mutex);
+	g_queue_push_tail(priv->event_queue, event);
+	g_mutex_unlock(&priv->event_queue_mutex);
+}
+
+static void
 retrieve_cap_format_info(struct gst_backend_priv *priv, GstVideoInfo *info)
 {
 	gint fourcc;
@@ -782,8 +800,8 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 			return GST_PAD_PROBE_OK;
 
 		retrieve_cap_format_info(priv, &info);
-
 		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
+		push_source_change_event(priv);
 
 	        set_event(priv->dev_ops_priv->event_state, POLLOUT);
 		wait_for_cap_reqbuf_invocation(priv);
@@ -1024,6 +1042,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->event_sequence = 0;
 	priv->subscribed_events = 0;
 	priv->event_queue = g_queue_new();
+	g_mutex_init(&priv->event_queue_mutex);
 
 	dev_ops_priv->gst_priv = priv;
 
@@ -1067,12 +1086,12 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 
 	g_mutex_clear(&priv->dev_lock);
 
+	g_mutex_clear(&priv->event_queue_mutex);
 	if (priv->event_queue) {
 		g_queue_clear_full(priv->event_queue,
 				   (GDestroyNotify)g_free);
 		priv->event_queue = NULL;
 	}
-
 	priv->subscribed_events = 0;
 
 	if (priv->probe_id)
@@ -3033,10 +3052,11 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 	g_return_val_if_fail(priv, retval);
 
 	g_mutex_lock(&priv->dev_lock);
+	g_mutex_lock(&priv->event_queue_mutex);
 
 	if (!priv->event_queue || priv->event_queue->length <= 0) {
 		errno = EAGAIN;
-		goto ERROR;
+		goto unlock;
 	}
 
 	if (priv->subscribed_events & (1 << V4L2_EVENT_SOURCE_CHANGE)) {
@@ -3048,7 +3068,8 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 		retval = 0;
 	}
 
- ERROR:
+ unlock:
+	g_mutex_lock(&priv->event_queue_mutex);
 	g_mutex_unlock(&priv->dev_lock);
 
 	return retval;
