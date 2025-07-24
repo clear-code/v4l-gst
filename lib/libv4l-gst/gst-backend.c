@@ -3073,7 +3073,7 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 	}
 
  unlock:
-	g_mutex_lock(&priv->event.mutex);
+	g_mutex_unlock(&priv->event.mutex);
 	g_mutex_unlock(&priv->dev_lock);
 
 	return retval;
