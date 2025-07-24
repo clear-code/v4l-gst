@@ -3068,6 +3068,8 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 		g_free(next);
 		errno = 0;
 		retval = 0;
+		GST_DEBUG("Dequeue SOURCE_CHANGE: pending %u, sequence: %u",
+			  ev->pending, ev->sequence);
 	}
 
  unlock:
