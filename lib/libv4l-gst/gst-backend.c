@@ -1251,17 +1251,13 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		priv->cap_pix_fmt.pixelformat = pix_fmt->pixelformat;
 		init_decoded_frame_params(pix_fmt);
-	} else {
-		/*
-		  TODO: Check the pix_fmt isn't changed more strictly.
-		  Changing it while playing isn't supported.
-		 */
-		if (priv->cap_pix_fmt.width != pix_fmt->width ||
-		    priv->cap_pix_fmt.height != pix_fmt->height ||
-		    priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
-			errno = ENOTTY;
-			return -1;
-		}
+	} else if (priv->cap_pix_fmt.width != pix_fmt->width ||
+		   priv->cap_pix_fmt.height != pix_fmt->height ||
+		   priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
+		/* TODO: Check the pix_fmt isn't changed more strictly. */
+		GST_ERROR("Changing pixel format during plaing isn't supported.");
+		errno = ENOTTY;
+		return -1;
 	}
 	GST_OBJECT_UNLOCK(priv->pipeline);
 
