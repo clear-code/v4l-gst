@@ -1254,7 +1254,7 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 	} else if (priv->cap_pix_fmt.width != pix_fmt->width ||
 		   priv->cap_pix_fmt.height != pix_fmt->height ||
 		   priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
-		/* TODO: Check the pix_fmt isn't changed more strictly. */
+		/* TODO: Should check the pix_fmt more strictly. */
 		GST_ERROR("Changing pixel format during playing isn't supported.");
 		errno = ENOTTY;
 		return -1;
