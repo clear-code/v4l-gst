@@ -1187,6 +1187,15 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 
+	GST_OBJECT_LOCK(priv->pipeline);
+	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
+		GST_ERROR("The pipeline is already running");
+		errno = EBUSY;
+		GST_OBJECT_UNLOCK(priv->pipeline);
+		return -1;
+	}
+	GST_OBJECT_UNLOCK(priv->pipeline);
+
 	pix_fmt = &fmt->fmt.pix_mp;
 
 	if (!is_pix_fmt_supported(priv->out_fmts, priv->out_fmts_num,
@@ -1238,9 +1247,23 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
-	priv->cap_pix_fmt.pixelformat = pix_fmt->pixelformat;
-
-	init_decoded_frame_params(pix_fmt);
+	GST_OBJECT_LOCK(priv->pipeline);
+	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
+		priv->cap_pix_fmt.pixelformat = pix_fmt->pixelformat;
+		init_decoded_frame_params(pix_fmt);
+	} else {
+		/*
+		  TODO: Check the pix_fmt isn't changed more strictly.
+		  Changing it while playing isn't supported.
+		 */
+		if (priv->cap_pix_fmt.width != pix_fmt->width ||
+		    priv->cap_pix_fmt.height != pix_fmt->height ||
+		    priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
+			errno = ENOTTY;
+			return -1;
+		}
+	}
+	GST_OBJECT_UNLOCK(priv->pipeline);
 
 	/* set unsupported parameters */
 	pix_fmt->field = V4L2_FIELD_NONE;
@@ -1260,16 +1283,6 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 		  buffer_type_to_string(fmt->type), fmt->type);
 
 	g_mutex_lock(&priv->dev_lock);
-
-	GST_OBJECT_LOCK(priv->pipeline);
-	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
-		GST_ERROR("The pipeline is already running");
-		errno = EBUSY;
-		GST_OBJECT_UNLOCK(priv->pipeline);
-		g_mutex_unlock(&priv->dev_lock);
-		return -1;
-	}
-	GST_OBJECT_UNLOCK(priv->pipeline);
 
 	if (fmt->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = set_fmt_ioctl_out(priv, fmt);
