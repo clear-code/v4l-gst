@@ -3073,7 +3073,7 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 	if (priv->event.subscribed & (1 << V4L2_EVENT_SOURCE_CHANGE)) {
 		struct v4l2_event *next = g_queue_pop_head(priv->event.queue);
 		if (!next) {
-			g_warning("Failed to pop an event.");
+			GST_WARNING("Failed to pop an event.");
 			errno = EINVAL;
 			goto unlock;
 		}
