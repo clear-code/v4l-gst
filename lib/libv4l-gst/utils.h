@@ -24,11 +24,12 @@
 #define GST_VIDEO_CODEC_MIME_H264 "video/x-h264"
 #define GST_VIDEO_CODEC_MIME_VP8  "video/x-vp8"
 
-guint convert_video_format_gst_to_v4l2(GstVideoFormat fmt);
-GstVideoFormat convert_video_format_v4l2_to_gst(guint fourcc);
-const gchar* convert_codec_type_v4l2_to_gst(guint fourcc);
-void fourcc_to_string(guint32 fourcc, gchar out[5]);
-const gchar* buffer_type_to_string(guint type);
-const gchar* event_type_to_string(guint type);
+guint32		fourcc_from_gst_video_format	(GstVideoFormat fmt);
+GstVideoFormat	fourcc_to_gst_video_format	(guint32 fourcc);
+const gchar*	fourcc_to_mimetype		(guint32 fourcc);
+void		fourcc_to_string		(guint32 fourcc,
+						 gchar out[5]);
+const gchar*	buffer_type_to_string		(guint type);
+const gchar*	event_type_to_string		(guint type);
 
 #endif /* __UTILS_H__ */

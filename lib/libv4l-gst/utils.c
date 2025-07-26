@@ -50,8 +50,8 @@ static const struct v4l_gst_format_info v4l_gst_vid_fmt_tbl[] = {
 	{ V4L2_PIX_FMT_NV12MT, GST_VIDEO_FORMAT_NV12_64Z32 },
 };
 
-guint
-convert_video_format_gst_to_v4l2(GstVideoFormat fmt)
+guint32
+fourcc_from_gst_video_format(GstVideoFormat fmt)
 {
 	gint i;
 	guint fourcc = 0;
@@ -65,7 +65,7 @@ convert_video_format_gst_to_v4l2(GstVideoFormat fmt)
 }
 
 GstVideoFormat
-convert_video_format_v4l2_to_gst(guint fourcc)
+fourcc_to_gst_video_format(guint32 fourcc)
 {
 	gint i;
 	GstVideoFormat fmt = GST_VIDEO_FORMAT_UNKNOWN;
@@ -79,7 +79,7 @@ convert_video_format_v4l2_to_gst(guint fourcc)
 }
 
 const gchar *
-convert_codec_type_v4l2_to_gst(guint fourcc)
+fourcc_to_mimetype(guint32 fourcc)
 {
 	const gchar *mime;
 

@@ -471,7 +471,7 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 				continue;
 			}
 
-			fourcc = convert_video_format_gst_to_v4l2(fmt);
+			fourcc = fourcc_from_gst_video_format(fmt);
 			if (fourcc == 0) {
 				GST_DEBUG("Failed to convert video format "
 					  "from gst to v4l2 : %s", fmt_str);
@@ -582,7 +582,7 @@ retrieve_cap_format_info(struct gst_backend_priv *priv, GstVideoInfo *info)
 	priv->cap_pix_fmt.width = info->width;
 	priv->cap_pix_fmt.height = info->height;
 
-	fourcc = convert_video_format_gst_to_v4l2(info->finfo->format);
+	fourcc = fourcc_from_gst_video_format(info->finfo->format);
 	if (priv->cap_pix_fmt.pixelformat != 0 &&
 	    priv->cap_pix_fmt.pixelformat != fourcc) {
 		GST_WARNING("Unexpected cap video format");
@@ -2017,7 +2017,7 @@ get_codec_caps_from_fourcc(guint fourcc)
 {
 	const gchar *mime;
 
-	mime = convert_codec_type_v4l2_to_gst(fourcc);
+	mime = fourcc_to_mimetype(fourcc);
 	if (!mime) {
 		gchar fourcc_str[5];
 		fourcc_to_string(fourcc, fourcc_str);
@@ -2730,8 +2730,7 @@ set_cap_format_to_pipeline(struct gst_backend_priv *priv)
 	GstVideoFormat fmt;
 	gboolean ret;
 
-	fmt = convert_video_format_v4l2_to_gst(priv->
-					       cap_pix_fmt.pixelformat);
+	fmt = fourcc_to_gst_video_format(priv->cap_pix_fmt.pixelformat);
 	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
 		gchar fourcc_str[5];
 		fourcc_to_string(priv->cap_pix_fmt.pixelformat, fourcc_str);
