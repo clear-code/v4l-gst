@@ -668,7 +668,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   here.
 		   ref: https://github.com/renesas-rcar/gst-omx/blob/37296f66e3392d8dcdcdae14b89b05dd7507dc39/omx/gstomxvideodec.c#L920
 
-		   On RZ/G2, you can use `omx-outbufs` property of omxvideodec
+		   On RZ/G2, you can use `num-outbufs` property of omxvideodec
 		   to override it.
 		   e.g.)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
