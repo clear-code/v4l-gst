@@ -103,7 +103,7 @@ fourcc_to_string(guint32 fourcc, gchar out[5])
 }
 
 const gchar*
-buffer_type_to_string(guint type)
+v4l2_buffer_type_to_string(guint type)
 {
 	switch (type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
@@ -140,7 +140,7 @@ buffer_type_to_string(guint type)
 }
 
 const gchar*
-event_type_to_string(guint type)
+v4l2_event_type_to_string(guint type)
 {
 	switch (type) {
 	case V4L2_EVENT_ALL:

@@ -1128,7 +1128,7 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	int ret;
 
 	GST_DEBUG("VIDIOC_S_FMT: type: %s (0x%x)",
-		  buffer_type_to_string(fmt->type), fmt->type);
+		  v4l2_buffer_type_to_string(fmt->type), fmt->type);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1197,7 +1197,7 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	int ret;
 
 	GST_DEBUG("VIDIOC_G_FMT: type: %s (0x%x)",
-		  buffer_type_to_string(fmt->type), fmt->type);
+		  v4l2_buffer_type_to_string(fmt->type), fmt->type);
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
@@ -1228,7 +1228,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	gchar fourcc_str[5];
 
 	GST_DEBUG("VIDIOC_ENUM_FMT: type: %s (0x%x) index: %d",
-		  buffer_type_to_string(desc->type), desc->type, desc->index);
+		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (!priv->out_fmts || !priv->cap_fmts) {
 		GST_ERROR("Supported formats lists are not prepared");
@@ -1646,7 +1646,7 @@ qbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	int ret;
 
 	GST_TRACE("VIDIOC_QBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  buffer_type_to_string(buf->type), buf->type,
+		  v4l2_buffer_type_to_string(buf->type), buf->type,
 		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
@@ -1938,7 +1938,7 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	int ret;
 
 	GST_TRACE("VIDIOC_DQBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  buffer_type_to_string(buf->type), buf->type,
+		  v4l2_buffer_type_to_string(buf->type), buf->type,
 		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
@@ -1979,7 +1979,7 @@ querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 	int ret;
 
 	GST_TRACE("VIDIOC_QUERYBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  buffer_type_to_string(buf->type), buf->type,
+		  v4l2_buffer_type_to_string(buf->type), buf->type,
 		  buf->index, buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
@@ -2681,7 +2681,7 @@ reqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_requestbuffers *req)
 	int ret;
 
 	GST_DEBUG("VIDIOC_REQBUF: type: %s (0x%x) count: %d memory: 0x%x",
-		  buffer_type_to_string(req->type), req->type,
+		  v4l2_buffer_type_to_string(req->type), req->type,
 		  req->count, req->memory);
 
 	if (req->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -2819,7 +2819,7 @@ streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	int ret;
 
 	GST_DEBUG("VIDIOC_STREAMON: type: %s (0x%x)",
-		  buffer_type_to_string(*type), *type);
+		  v4l2_buffer_type_to_string(*type), *type);
 
 	if (*type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = streamon_ioctl_out(priv);
@@ -2842,7 +2842,7 @@ streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 	int ret;
 
 	GST_DEBUG("VIDIOC_STREAMOFF: type: %s (0x%x)",
-		  buffer_type_to_string(*type), *type);
+		  v4l2_buffer_type_to_string(*type), *type);
 
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(GST_BIN(priv->pipeline),
 					  GST_DEBUG_GRAPH_SHOW_ALL,
@@ -2878,7 +2878,7 @@ subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	g_mutex_lock(&priv->dev_lock);
 
 	GST_DEBUG("VIDIOC_SUBSCRIBE_EVENT: type: %s (0x%x) id: %d flags: 0x%x",
-		  event_type_to_string(subscription->type), subscription->type,
+		  v4l2_event_type_to_string(subscription->type), subscription->type,
 		  subscription->id, subscription->flags);
 
 	switch (subscription->type) {
@@ -2890,7 +2890,7 @@ subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		break;
 	default:
 		GST_ERROR("unsupported V4L2_EVENT type: %s (type: 0x%x)",
-			  event_type_to_string(subscription->type),
+			  v4l2_event_type_to_string(subscription->type),
 			  subscription->type);
 		errno = ENOTTY;
 		break;
@@ -3336,7 +3336,7 @@ g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 
 	GST_INFO("unsupported VIDIOC_G_CROP v4l2_crop type: 0x%x", crop->type);
 
-	buf_type = buffer_type_to_string(crop->type);
+	buf_type = v4l2_buffer_type_to_string(crop->type);
 	if (buf_type) {
 		GST_DEBUG("v4l2_crop type: V4L2_BUF_TYPE_%s", buf_type);
 	} else {
@@ -3463,7 +3463,7 @@ unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		break;
 	default:
 		GST_ERROR("unsupported V4L2_EVENT type: %s (type: 0x%x)",
-			  event_type_to_string(subscription->type),
+			  v4l2_event_type_to_string(subscription->type),
 			  subscription->type);
 		errno = ENOTTY;
 		retval = -1;
