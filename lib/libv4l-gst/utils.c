@@ -24,7 +24,7 @@ struct v4l_gst_format_info {
 	GstVideoFormat format;
 };
 
-static const struct v4l_gst_format_info v4l_gst_vid_fmt_tbl[] = {
+static const struct v4l_gst_format_info v4l_gst_video_format_table[] = {
 	{ V4L2_PIX_FMT_GREY, GST_VIDEO_FORMAT_GRAY8 },
 	{ V4L2_PIX_FMT_RGB565, GST_VIDEO_FORMAT_RGB16 },
 	{ V4L2_PIX_FMT_RGB24, GST_VIDEO_FORMAT_RGB },
@@ -51,14 +51,14 @@ static const struct v4l_gst_format_info v4l_gst_vid_fmt_tbl[] = {
 };
 
 guint32
-fourcc_from_gst_video_format(GstVideoFormat fmt)
+fourcc_from_gst_video_format(GstVideoFormat format)
 {
 	gint i;
 	guint fourcc = 0;
 
-	for (i = 0; i < G_N_ELEMENTS(v4l_gst_vid_fmt_tbl); i++) {
-		if (v4l_gst_vid_fmt_tbl[i].format == fmt)
-			fourcc = v4l_gst_vid_fmt_tbl[i].fourcc;
+	for (i = 0; i < G_N_ELEMENTS(v4l_gst_video_format_table); i++) {
+		if (v4l_gst_video_format_table[i].format == format)
+			fourcc = v4l_gst_video_format_table[i].fourcc;
 	}
 
 	return fourcc;
@@ -68,29 +68,27 @@ GstVideoFormat
 fourcc_to_gst_video_format(guint32 fourcc)
 {
 	gint i;
-	GstVideoFormat fmt = GST_VIDEO_FORMAT_UNKNOWN;
+	GstVideoFormat format = GST_VIDEO_FORMAT_UNKNOWN;
 
-	for (i = 0; i < G_N_ELEMENTS(v4l_gst_vid_fmt_tbl); i++) {
-		if (v4l_gst_vid_fmt_tbl[i].fourcc == fourcc)
-			fmt = v4l_gst_vid_fmt_tbl[i].format;
+	for (i = 0; i < G_N_ELEMENTS(v4l_gst_video_format_table); i++) {
+		if (v4l_gst_video_format_table[i].fourcc == fourcc)
+			format = v4l_gst_video_format_table[i].format;
 	}
 
-	return fmt;
+	return format;
 }
 
 const gchar *
 fourcc_to_mimetype(guint32 fourcc)
 {
-	const gchar *mime;
-
-	if (fourcc == V4L2_PIX_FMT_H264)
-		mime = GST_VIDEO_CODEC_MIME_H264;
-	else if (fourcc == V4L2_PIX_FMT_VP8)
-		mime = GST_VIDEO_CODEC_MIME_VP8;
-	else
-		mime = NULL;
-
-	return mime;
+	switch(fourcc) {
+	case V4L2_PIX_FMT_H264:
+		return GST_VIDEO_CODEC_MIME_H264;
+	case V4L2_PIX_FMT_VP8:
+		return GST_VIDEO_CODEC_MIME_VP8;
+	default:
+		return NULL;
+	}
 }
 
 void
