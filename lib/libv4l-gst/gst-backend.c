@@ -782,25 +782,10 @@ init_app_elements(struct gst_backend_priv *priv)
 	if (!get_app_elements(priv->pipeline, &priv->appsrc, &priv->appsink))
 		return FALSE;
 
-	/* Set the appsrc queue size to unlimited.
-	   The amount of buffers is managed by the buffer pool. */
-	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
-
-	priv->appsink_cb.new_sample = appsink_callback_new_sample;
-	priv->appsink_cb.eos = appsink_callback_eos;
-
-	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
-				   &priv->appsink_cb, priv, NULL);
-
-	/* For queuing buffers received from appsink */
-	priv->cap_buffers_queue = g_queue_new();
-	priv->reqbufs_queue = g_queue_new();
-	g_mutex_init(&priv->queue_mutex);
-	g_cond_init(&priv->queue_cond);
-
 	if (!get_supported_video_format_out(priv->appsrc, &out_fmts,
 					    &out_fmts_num))
 		return FALSE;
+
 	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
 					    &cap_fmts_num)) {
 		g_free(out_fmts);
@@ -810,6 +795,22 @@ init_app_elements(struct gst_backend_priv *priv)
 	priv->out_fmts_num = out_fmts_num;
 	priv->cap_fmts = cap_fmts;
 	priv->cap_fmts_num = cap_fmts_num;
+
+	/* For queuing buffers received from appsink */
+	priv->cap_buffers_queue = g_queue_new();
+	priv->reqbufs_queue = g_queue_new();
+	g_mutex_init(&priv->queue_mutex);
+	g_cond_init(&priv->queue_cond);
+
+	/* Set the appsrc queue size to unlimited.
+	   The amount of buffers is managed by the buffer pool. */
+	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
+
+	priv->appsink_cb.new_sample = appsink_callback_new_sample;
+	priv->appsink_cb.eos = appsink_callback_eos;
+
+	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
+				   &priv->appsink_cb, priv, NULL);
 
 	return TRUE;
 }
@@ -875,47 +876,48 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 			       &priv->config.cap_min_buffers,
 			       &priv->config.max_width,
 			       &priv->config.max_height))
-		goto free_priv;
+		goto error;
 
 	priv->pipeline = create_pipeline(pipeline_str);
-	g_free(pipeline_str);
 
 	if (!priv->pipeline)
-		goto free_pool_path;
+		goto error;
 
 	/* Initialization regarding appsrc and appsink elements */
 	if (!init_app_elements(priv))
-		goto free_pipeline;
+		goto error;
 
-	if (!init_buffer_pool(priv, pool_lib_path))
-		goto free_app_elems_init_objs;
-	g_free(pool_lib_path);
-
-	g_mutex_init(&priv->dev_lock);
+	if (!init_buffer_pool(priv, pool_lib_path)) {
+		g_mutex_clear(&priv->queue_mutex);
+		g_cond_clear(&priv->queue_cond);
+		goto error;
+	}
 
 	g_mutex_init(&priv->event.mutex);
 	priv->event.subscribed = 0;
 	priv->event.sequence = 0;
 	priv->event.queue = g_queue_new();
 
+	g_mutex_init(&priv->dev_lock);
+
 	dev_ops_priv->gst_priv = priv;
+
+	g_free(pipeline_str);
+	g_free(pool_lib_path);
 
 	return 0;
 
-	/* error cases */
-free_app_elems_init_objs:
-	g_queue_free(priv->cap_buffers_queue);
-	g_queue_free(priv->reqbufs_queue);
-	g_mutex_clear(&priv->queue_mutex);
-	g_cond_clear(&priv->queue_cond);
-
+ error:
+	if (priv->cap_buffers_queue)
+		g_queue_free(priv->cap_buffers_queue);
+	if (priv->reqbufs_queue)
+		g_queue_free(priv->reqbufs_queue);
 	g_free(priv->out_fmts);
 	g_free(priv->cap_fmts);
-free_pipeline:
-	gst_object_unref(priv->pipeline);
-free_pool_path:
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+	g_free(pipeline_str);
 	g_free(pool_lib_path);
-free_priv:
 	g_free(priv);
 
 	return -1;
