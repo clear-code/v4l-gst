@@ -85,8 +85,6 @@ struct gst_backend_priv {
 	gsize out_buf_size;
 	struct v4l2_pix_format_mplane cap_pix_fmt;
 
-	gint cap_min_buffers;
-
 	GstBufferPool *src_pool;
 	GstBufferPool *sink_pool;
 
@@ -118,10 +116,13 @@ struct gst_backend_priv {
 
 	GstBuffer *eos_buffer;
 
-	gint max_width;
-	gint max_height;
-
 	gint out_cnt;
+
+	struct {
+		gint cap_min_buffers;
+		gint max_width;
+		gint max_height;
+	} config;
 
 	struct {
 		GMutex mutex;
@@ -132,8 +133,8 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_conf_settings(gchar **pipeline_str, gchar **pool_lib_path,
-		    gint *min_buffers, gint *max_width, gint *max_height)
+parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
+		  gint *min_buffers, gint *max_width, gint *max_height)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -870,10 +871,10 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 				"v4l-gst-ioctl", 0,
 				"debug category for v4l-gst IOCTL operation");
 
-	if (!parse_conf_settings(&pipeline_str, &pool_lib_path,
-				 &priv->cap_min_buffers,
-				 &priv->max_width,
-				 &priv->max_height))
+	if (!parse_config_file(&pipeline_str, &pool_lib_path,
+			       &priv->config.cap_min_buffers,
+			       &priv->config.max_width,
+			       &priv->config.max_height))
 		goto free_priv;
 
 	priv->pipeline = create_pipeline(pipeline_str);
@@ -1325,10 +1326,10 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
 	}
 	argp->stepwise.min_width = 16;
 	argp->stepwise.min_height = 16;
-	argp->stepwise.max_width = priv->max_width ?
-		priv->max_width : 1920;
-	argp->stepwise.max_height = priv->max_height ?
-		priv->max_height : 1088;
+	argp->stepwise.max_width = priv->config.max_width ?
+		priv->config.max_width : 1920;
+	argp->stepwise.max_height = priv->config.max_height ?
+		priv->config.max_height : 1088;
 
 	return 0;
 }
@@ -1343,7 +1344,7 @@ get_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_control *ctrl)
 
 	switch (ctrl->id) {
 	case V4L2_CID_MIN_BUFFERS_FOR_CAPTURE:
-		ctrl->value = priv->cap_min_buffers;
+		ctrl->value = priv->config.cap_min_buffers;
 		ret = 0;
 		break;
 	default:
@@ -1376,7 +1377,7 @@ get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *
 	for (i = 0; i < ext_ctrls->count; i++) {
 		struct v4l2_ext_control *ext_ctrl = &ext_ctrls->controls[i];
 		if (ext_ctrl->id == V4L2_CID_MIN_BUFFERS_FOR_CAPTURE) {
-			ext_ctrl->value = priv->cap_min_buffers;
+			ext_ctrl->value = priv->config.cap_min_buffers;
 			continue;
 		}
 		errno = EINVAL;
