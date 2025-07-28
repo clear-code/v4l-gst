@@ -945,6 +945,7 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	if (priv->event.queue) {
 		g_queue_clear_full(priv->event.queue,
 				   (GDestroyNotify)g_free);
+		g_queue_free(priv->event.queue);
 		priv->event.queue = NULL;
 	}
 	priv->event.subscribed = 0;
