@@ -982,12 +982,8 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 int
 querycap_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_capability *cap)
 {
-#if 0
-	GST_DEBUG("VIDIOC_QUERYCAP driver: %s card: %s bus_info: %s version: %s",
-		  cap->driver, cap->card, cap->bus_info, cap->version);
-#else
 	GST_DEBUG("VIDIOC_QUERYCAP");
-#endif
+
 	cap->device_caps = V4L2_CAP_VIDEO_M2M_MPLANE
 #ifdef ENABLE_CHROMIUM_COMPAT
 			| V4L2_CAP_VIDEO_CAPTURE_MPLANE
