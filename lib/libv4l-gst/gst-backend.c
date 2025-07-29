@@ -129,7 +129,7 @@ struct gst_backend_priv {
 		gint subscribed;
 		guint32 sequence;
 		GQueue *queue;
-	} event;
+	} v4l2events;
 };
 
 static gboolean
@@ -565,13 +565,13 @@ push_source_change_event(struct gst_backend_priv *priv)
 	event->type = V4L2_EVENT_SOURCE_CHANGE;
 	event->u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION;
 	event->pending = 0;
-	event->sequence = ++priv->event.sequence;
+	event->sequence = ++priv->v4l2events.sequence;
 	event->id = 0;
 	clock_gettime(CLOCK_REALTIME, &event->timestamp);
 
-	g_mutex_lock(&priv->event.mutex);
-	g_queue_push_tail(priv->event.queue, event);
-	g_mutex_unlock(&priv->event.mutex);
+	g_mutex_lock(&priv->v4l2events.mutex);
+	g_queue_push_tail(priv->v4l2events.queue, event);
+	g_mutex_unlock(&priv->v4l2events.mutex);
 }
 
 static void
@@ -893,10 +893,10 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 		goto error;
 	}
 
-	g_mutex_init(&priv->event.mutex);
-	priv->event.subscribed = 0;
-	priv->event.sequence = 0;
-	priv->event.queue = g_queue_new();
+	g_mutex_init(&priv->v4l2events.mutex);
+	priv->v4l2events.subscribed = 0;
+	priv->v4l2events.sequence = 0;
+	priv->v4l2events.queue = g_queue_new();
 
 	g_mutex_init(&priv->dev_lock);
 
@@ -942,14 +942,14 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 
 	g_mutex_clear(&priv->dev_lock);
 
-	if (priv->event.queue) {
-		g_queue_clear_full(priv->event.queue,
+	if (priv->v4l2events.queue) {
+		g_queue_clear_full(priv->v4l2events.queue,
 				   (GDestroyNotify)g_free);
-		g_queue_free(priv->event.queue);
-		priv->event.queue = NULL;
+		g_queue_free(priv->v4l2events.queue);
+		priv->v4l2events.queue = NULL;
 	}
-	priv->event.subscribed = 0;
-	g_mutex_clear(&priv->event.mutex);
+	priv->v4l2events.subscribed = 0;
+	g_mutex_clear(&priv->v4l2events.mutex);
 
 	if (priv->probe_id)
 		remove_query_pad_probe(priv->appsink, priv->probe_id);
@@ -2882,8 +2882,8 @@ subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 	switch (subscription->type) {
 	case V4L2_EVENT_SOURCE_CHANGE:
-		/* Chromium supports only this type of event. */
-		priv->event.subscribed |= (1 << V4L2_EVENT_SOURCE_CHANGE);
+		/* Chromium supports only this type of v4l2events. */
+		priv->v4l2events.subscribed |= (1 << V4L2_EVENT_SOURCE_CHANGE);
 		errno = 0;
 		retval = 0;
 		break;
@@ -2913,22 +2913,23 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 	g_return_val_if_fail(priv, retval);
 
 	g_mutex_lock(&priv->dev_lock);
-	g_mutex_lock(&priv->event.mutex);
+	g_mutex_lock(&priv->v4l2events.mutex);
 
-	if (!priv->event.queue || priv->event.queue->length == 0) {
+	if (!priv->v4l2events.queue || priv->v4l2events.queue->length == 0) {
 		errno = EAGAIN;
 		goto unlock;
 	}
 
-	if (priv->event.subscribed & (1 << V4L2_EVENT_SOURCE_CHANGE)) {
-		struct v4l2_event *next = g_queue_pop_head(priv->event.queue);
+	if (priv->v4l2events.subscribed & (1 << V4L2_EVENT_SOURCE_CHANGE)) {
+		struct v4l2_event *next
+			= g_queue_pop_head(priv->v4l2events.queue);
 		if (!next) {
-			GST_WARNING("Failed to pop an event.");
+			GST_WARNING("Failed to pop a v4l2_event.");
 			errno = EINVAL;
 			goto unlock;
 		}
 		*ev = *next;
-		ev->pending = priv->event.queue->length;
+		ev->pending = priv->v4l2events.queue->length;
 		g_free(next);
 		errno = 0;
 		retval = 0;
@@ -2937,7 +2938,7 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 	}
 
  unlock:
-	g_mutex_unlock(&priv->event.mutex);
+	g_mutex_unlock(&priv->v4l2events.mutex);
 	g_mutex_unlock(&priv->dev_lock);
 
 	return retval;
@@ -3455,10 +3456,10 @@ unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		/* V4L2_EVENT_ALL is valid only for unsubscribe:
 		   https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/vidioc-dqevent.html#id2
 		 */
-		priv->event.subscribed = 0;
+		priv->v4l2events.subscribed = 0;
 		break;
 	case V4L2_EVENT_SOURCE_CHANGE:
-		priv->event.subscribed &= ~(1 << V4L2_EVENT_SOURCE_CHANGE);
+		priv->v4l2events.subscribed &= ~(1 << V4L2_EVENT_SOURCE_CHANGE);
 		break;
 	default:
 		GST_ERROR("unsupported V4L2_EVENT type: %s (type: 0x%x)",
