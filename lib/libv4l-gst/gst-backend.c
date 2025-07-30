@@ -3130,6 +3130,18 @@ expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		break;
 	case V4L2_BUF_TYPE_PRIVATE:
 		expbuf->reserved[0] = mem->offset;
+		if (priv->cap_pix_fmt.pixelformat == V4L2_PIX_FMT_NV12 ||
+		    priv->cap_pix_fmt.pixelformat == V4L2_PIX_FMT_NV21) {
+			if (expbuf->plane == 1) {
+				/* chromium V4L2 decoder implicitly use reserved[0] as frame offset, so set appropriate
+				   offset to secondary plane. */
+				gsize memory_size = gst_memory_get_sizes(mem, 0, NULL);
+				gsize total_plane_size = priv->cap_pix_fmt.plane_fmt[0].sizeimage + priv->cap_pix_fmt.plane_fmt[1].sizeimage;
+				if (memory_size == total_plane_size) {
+					expbuf->reserved[0] = mem->offset + priv->cap_pix_fmt.plane_fmt[0].sizeimage;
+				}
+			}
+		}
 		break;
 	default:
 		GST_ERROR("Can only export capture buffers as dmebuf");
