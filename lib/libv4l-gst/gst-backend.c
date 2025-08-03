@@ -1106,7 +1106,12 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		   priv->cap_pix_fmt.height != pix_fmt->height ||
 		   priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
 		/* TODO: Should check the pix_fmt more strictly. */
-		GST_ERROR("Changing pixel format during playing isn't supported.");
+		gchar fourcc_str[5];
+		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+		GST_ERROR("Changing pixel format during playing isn't supported: "
+			  "width: %u, height: %u, pixelformat: %s (0x%x)",
+			  pix_fmt->width, pix_fmt->height,
+			  fourcc_str, pix_fmt->pixelformat);
 		errno = ENOTTY;
 		return -1;
 	}
