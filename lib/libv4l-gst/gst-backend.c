@@ -130,6 +130,8 @@ struct gst_backend_priv {
 		guint32 sequence;
 		GQueue *queue;
 	} v4l2events;
+
+	gboolean got_eos;
 };
 
 static gboolean
@@ -1725,10 +1727,16 @@ fill_v4l2_buffer(struct gst_backend_priv *priv, GstBufferPool *pool,
 	set_v4l2_buffer_plane_params(priv, buffers, n_planes, bytesused,
 				     timestamp, buf);
 
+	buf->flags = 0;
+	if (priv->got_eos) {
+		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
+		buf->flags |= V4L2_BUF_FLAG_LAST;
+		priv->got_eos = FALSE;
+	}
+
 	/* set unused params */
 	memset(&buf->timecode, 0, sizeof(buf->timecode));
 	buf->sequence = 0;
-	buf->flags = 0;
 	buf->field = V4L2_FIELD_NONE;
 
 	buf->length = n_planes;
@@ -2803,6 +2811,8 @@ streamon_ioctl_out(struct gst_backend_priv *priv)
 		gst_buffer_unref(priv->out_buffers[0].buffer);
 	}
 
+	priv->got_eos = FALSE;
+
 	gst_element_set_state(priv->pipeline, GST_STATE_PLAYING);
 
 	priv->is_pipeline_started = TRUE;
@@ -3496,18 +3506,11 @@ int
 decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		  struct v4l2_decoder_cmd *decoder_cmd)
 {
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret = 0;
 
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
-	if (vidioc_features && strstr(vidioc_features, "VIDIOC_DECODER_CMD")) {
-		GST_ERROR(v4l_gst_ioctl_debug_category,
-			  "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
-			  decoder_cmd->cmd, decoder_cmd->flags);
-		errno = ENOTTY;
-		return 0;
-	}
-#endif
+	g_mutex_lock(&priv->dev_lock);
+
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3519,7 +3522,8 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu",
 			      decoder_cmd->stop.pts);
-		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
+		priv->got_eos = TRUE;
+		gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3539,6 +3543,8 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
                               decoder_cmd->cmd, decoder_cmd->flags);
 		break;
 	}
+
+	g_mutex_unlock(&priv->dev_lock);
 
 	return ret;
 }
