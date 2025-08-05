@@ -23,6 +23,7 @@
 
 #define GST_VIDEO_CODEC_MIME_H264 "video/x-h264"
 #define GST_VIDEO_CODEC_MIME_VP8  "video/x-vp8"
+#define GST_VIDEO_CODEC_MIME_HEVC  "video/x-h265"
 
 guint32		fourcc_from_gst_video_format	(GstVideoFormat fmt);
 GstVideoFormat	fourcc_to_gst_video_format	(guint32 fourcc);

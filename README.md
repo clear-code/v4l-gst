@@ -28,11 +28,15 @@ The setting file location is `/etc/xdg/libv4l-gst.conf`
 
 ### Settings
 
-**pipeline**: The GStreamer pipeline to be used.  Should include everything but the input and output nodes  
 **max-width**: The maximum width of the video that can be decoded through the plugin (default: 1920)  
 **max-height**: The maximum width of the video that can be decoded through the plugin (default: 1080)   
 **bufferpool-library**: Path to the library that provides buffer pools for input and output nodes  
 **min-buffers**: The minimum number of buffers for each of the above buffer pools  
+
+It also supports format specific configuration section:
+
+* **pipeline**: The GStreamer pipeline to be used.  Should include everything but the input and output nodes
+* **enabled**: pipeline Should be enabled or not, Set true or false. (default: true)
 
 ### Example
 The following settings are for the Renesas Porter board,
@@ -41,9 +45,16 @@ but they may be updated to use more generic settings.
 
 ```
 [libv4l-gst]
-pipeline=h264parse ! omxh264dec ! queue max-size-bytes=0 max-size-time=0 max-size-buffers=0 ! vspfilter
 bufferpool-library=/usr/lib/libv4l/plugins/v4l-gst-bufferpool/libv4l-gst-bufferpool-rel.so
 min-buffers=2
+
+[H264]
+pipeline=h264parse ! omxh264dec ! queue max-size-bytes=0 max-size-time=0 max-size-buffers=0 ! vspfilter
+enabled=true
+
+[HEVC]
+pipeline=h265parse ! omxh265dec
+enabled=true
 ```
 
 Running

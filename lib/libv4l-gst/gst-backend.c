@@ -122,6 +122,9 @@ struct gst_backend_priv {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
+		/* TODO: non exclusive pipeline support */
+		gboolean enable_h264;
+		gboolean enable_hevc;
 	} config;
 
 	struct {
@@ -136,7 +139,8 @@ struct gst_backend_priv {
 
 static gboolean
 parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
-		  gint *min_buffers, gint *max_width, gint *max_height)
+		  gint *min_buffers, gint *max_width, gint *max_height,
+		  gboolean *enable_h264, gboolean *enable_hevc)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -160,48 +164,67 @@ parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
 		goto free_key_file;
 	}
 
+	*enable_h264 = FALSE;
+	*enable_hevc = FALSE;
 	groups = g_key_file_get_groups(conf_key, &n_groups);
+	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		if (g_strcmp0(groups[i], "libv4l-gst") != 0)
-			/* search next group */
-			continue;
+		if (!g_strcmp0(groups[i], "libv4l-gst")) {
+			GST_DEBUG("libv4l-gst configuration file is found");
 
-		GST_DEBUG("libv4l-gst configuration file is found");
+			/* No need to check if the external bufferpool library is set,
+			   because it is not mandatory for this plugin. */
+			*pool_lib_path = g_key_file_get_string(conf_key, groups[i],
+							       "bufferpool-library",
+							       NULL);
 
-		err = NULL;
-		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-						      "pipeline", &err);
-		if (!*pipeline_str) {
-			GST_ERROR("GStreamer pipeline is not specified");
-			g_error_free(err);
-			goto free_groups;
+			GST_DEBUG("external buffer pool library : %s",
+				  *pool_lib_path ? *pool_lib_path : "none");
+
+			*min_buffers = g_key_file_get_integer(conf_key, groups[i],
+							      "min-buffers", NULL);
+			if (*min_buffers == 0)
+				*min_buffers = DEF_CAP_MIN_BUFFERS;
+
+			GST_DEBUG("minimum number of buffers on CAPTURE "
+				  "for the GStreamer pipeline to work : %d",
+				  *min_buffers);
+
+			*max_width = g_key_file_get_integer(conf_key, groups[i],
+							    "max-width", NULL);
+			*max_height = g_key_file_get_integer(conf_key, groups[i],
+							     "max-height", NULL);
+		} else {
+			GST_DEBUG("Parse section: [%s]", groups[i]);
+			err = NULL;
+			gboolean enabled = g_key_file_get_boolean(conf_key, groups[i],
+								  "enabled", &err);
+			if (err) {
+				GST_ERROR("GStreamer enabled is not specified, assume enabled=true");
+				g_error_free(err);
+				enabled = TRUE;
+			}
+			if (enabled) {
+				*pipeline_str = g_key_file_get_string(conf_key, groups[i],
+								      "pipeline", &err);
+				if (!*pipeline_str) {
+					GST_ERROR("GStreamer pipeline is not specified");
+					g_error_free(err);
+					goto free_groups;
+				}
+				GST_DEBUG("parsed pipeline : %s", *pipeline_str);
+				if (!g_strcmp0(groups[i], "H264")) {
+					*enable_h264 = TRUE;
+					GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
+				}
+				if (!g_strcmp0(groups[i], "HEVC")) {
+					*enable_hevc = TRUE;
+					GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+				}
+			} else {
+				GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
+			}
 		}
-
-		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
-
-		/* No need to check if the external bufferpool library is set,
-		   because it is not mandatory for this plugin. */
-		*pool_lib_path = g_key_file_get_string(conf_key, groups[i],
-						       "bufferpool-library",
-						       NULL);
-
-		GST_DEBUG("external buffer pool library : %s",
-			  *pool_lib_path ? *pool_lib_path : "none");
-
-		*min_buffers = g_key_file_get_integer(conf_key, groups[i],
-						      "min-buffers", NULL);
-		if (*min_buffers == 0)
-			*min_buffers = DEF_CAP_MIN_BUFFERS;
-
-		GST_DEBUG("minimum number of buffers on CAPTURE "
-			  "for the GStreamer pipeline to work : %d",
-			  *min_buffers);
-
-                *max_width = g_key_file_get_integer(conf_key, groups[i],
-                                                      "max-width", NULL);
-                *max_height = g_key_file_get_integer(conf_key, groups[i],
-                                                      "max-height", NULL);
-		break;
 	}
 
 	ret = TRUE;
@@ -370,7 +393,7 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 
 static gboolean
 get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
-			       gint *out_fmts_num)
+			       gint *out_fmts_num, gboolean enable_hevc)
 {
 	GstCaps *caps;
 	GstStructure *structure;
@@ -400,6 +423,14 @@ get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
 			fourcc = V4L2_PIX_FMT_H264;
 		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_VP8) == 0) {
 			fourcc = V4L2_PIX_FMT_VP8;
+		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
+			if (enable_hevc) {
+				fourcc = V4L2_PIX_FMT_HEVC;
+			} else {
+				GST_ERROR("Disabled HEVC pipeline for codec : %s", mime);
+				gst_caps_unref(caps);
+				return FALSE;
+			}
 		} else {
 			GST_ERROR("Unsupported codec : %s", mime);
 			gst_caps_unref(caps);
@@ -414,6 +445,8 @@ get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
 		(*out_fmts)[0].fmt = fourcc;
 		if(fourcc == V4L2_PIX_FMT_H264)
 			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+		else if (fourcc == V4L2_PIX_FMT_HEVC)
+			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
 		else
 			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
 	}
@@ -785,7 +818,8 @@ init_app_elements(struct gst_backend_priv *priv)
 		return FALSE;
 
 	if (!get_supported_video_format_out(priv->appsrc, &out_fmts,
-					    &out_fmts_num))
+					    &out_fmts_num,
+					    priv->config.enable_hevc))
 		return FALSE;
 
 	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
@@ -877,7 +911,9 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	if (!parse_config_file(&pipeline_str, &pool_lib_path,
 			       &priv->config.cap_min_buffers,
 			       &priv->config.max_width,
-			       &priv->config.max_height))
+			       &priv->config.max_height,
+			       &priv->config.enable_h264,
+			       &priv->config.enable_hevc))
 		goto error;
 
 	priv->pipeline = create_pipeline(pipeline_str);
@@ -3210,16 +3246,29 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	}
 #endif
 
+	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	GST_INFO("unsupported VIDIOC_QUERYCTRL id: 0x%x", query_ctrl->id);
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
-		query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
+		if (priv->config.enable_h264) {
+			query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
+			query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
+		} else {
+			GST_ERROR("disabled H264 profile for query_ctrl id: %x", query_ctrl->id);
+			errno = EINVAL;
+			return -1;
+		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
-		query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
+		if (priv->config.enable_hevc) {
+			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
+			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
+		} else {
+			GST_ERROR("disabled H265/HEVC profile for unsupported query_ctrl id: %x", query_ctrl->id);
+			errno = EINVAL;
+			return -1;
+		}
 		break;
 #if 0 // No AV1, VP8, VP9 definition
 	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
@@ -3281,6 +3330,7 @@ querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
 		switch (query_menu->index) {
 		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN:
+		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE:
 		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10:
 			break;
 		default:
