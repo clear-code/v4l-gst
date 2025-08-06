@@ -222,6 +222,8 @@ parse_config_file(struct gst_backend_priv *priv,
 						      "pipeline", &err);
 		if (!*pipeline_str) {
 			GST_ERROR("GStreamer pipeline is not specified");
+			if (err) g_error_free(err);
+			err = NULL;
 			continue;
 		}
 		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
@@ -235,7 +237,6 @@ parse_config_file(struct gst_backend_priv *priv,
 		}
 	}
 
-free_groups:
 	g_strfreev(groups);
 free_key_file:
 	g_key_file_free(conf_key);
