@@ -86,6 +86,8 @@ fourcc_to_mimetype(guint32 fourcc)
 		return GST_VIDEO_CODEC_MIME_H264;
 	case V4L2_PIX_FMT_VP8:
 		return GST_VIDEO_CODEC_MIME_VP8;
+	case V4L2_PIX_FMT_HEVC:
+		return GST_VIDEO_CODEC_MIME_HEVC;
 	default:
 		return NULL;
 	}

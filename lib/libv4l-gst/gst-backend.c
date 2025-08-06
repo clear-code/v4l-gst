@@ -1327,6 +1327,7 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
         case V4L2_PIX_FMT_RGB32:
         case V4L2_PIX_FMT_BGR32:
         case V4L2_PIX_FMT_H264:
+        case V4L2_PIX_FMT_HEVC:
 		argp->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
 		argp->stepwise.step_width = 1;
 		argp->stepwise.step_height = 1;
@@ -2070,7 +2071,8 @@ get_codec_caps_from_fourcc(guint fourcc)
 		return NULL;
 	}
 
-	if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
+	if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0 ||
+	    g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
 		return gst_caps_new_simple(mime, "stream-format",
 					   G_TYPE_STRING, "byte-stream", NULL);
 	}
