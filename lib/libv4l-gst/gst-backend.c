@@ -144,10 +144,10 @@ parse_config_file(struct gst_backend_priv *priv,
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
 	const gchar *conf_name = "libv4l-gst.conf";
+	const gchar *libv4l_gst_group = "libv4l-gst";
 	GError *err = NULL;
 	gchar **groups;
 	gsize n_groups;
-	gboolean ret = FALSE;
 	gint i;
 
 	sys_conf_dirs = g_get_system_config_dirs();
@@ -163,78 +163,87 @@ parse_config_file(struct gst_backend_priv *priv,
 		goto free_key_file;
 	}
 
+	GST_DEBUG("libv4l-gst configuration file is found");
+
+	/* [libv4l-gst] */
+	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
+		/* No need to check if the external bufferpool library is set,
+		   because it is not mandatory for this plugin. */
+		*pool_lib_path
+			= g_key_file_get_string(conf_key, libv4l_gst_group,
+						"bufferpool-library",
+						NULL);
+
+		GST_DEBUG("external buffer pool library : %s",
+			  *pool_lib_path ? *pool_lib_path : "none");
+
+		priv->config.cap_min_buffers
+			= g_key_file_get_integer(conf_key, libv4l_gst_group,
+						 "min-buffers", NULL);
+		if (priv->config.cap_min_buffers == 0)
+			priv->config.cap_min_buffers = DEF_CAP_MIN_BUFFERS;
+
+		GST_DEBUG("minimum number of buffers on CAPTURE "
+			  "for the GStreamer pipeline to work : %d",
+			  priv->config.cap_min_buffers);
+
+		priv->config.max_width
+			= g_key_file_get_integer(conf_key, libv4l_gst_group,
+						 "max-width", NULL);
+		priv->config.max_height
+			= g_key_file_get_integer(conf_key, libv4l_gst_group,
+						 "max-height", NULL);
+	}
+
+	/* [H264], [HEVC], etc... */
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		if (!g_strcmp0(groups[i], "libv4l-gst")) {
-			GST_DEBUG("libv4l-gst configuration file is found");
+		gboolean enabled;
 
-			/* No need to check if the external bufferpool library is set,
-			   because it is not mandatory for this plugin. */
-			*pool_lib_path = g_key_file_get_string(conf_key, groups[i],
-							       "bufferpool-library",
-							       NULL);
+		if (!g_strcmp0(groups[i], libv4l_gst_group))
+			continue;
 
-			GST_DEBUG("external buffer pool library : %s",
-				  *pool_lib_path ? *pool_lib_path : "none");
-
-			priv->config.cap_min_buffers
-				= g_key_file_get_integer(conf_key, groups[i],
-							 "min-buffers", NULL);
-			if (priv->config.cap_min_buffers == 0)
-				priv->config.cap_min_buffers = DEF_CAP_MIN_BUFFERS;
-
-			GST_DEBUG("minimum number of buffers on CAPTURE "
-				  "for the GStreamer pipeline to work : %d",
-				  priv->config.cap_min_buffers);
-
-			priv->config.max_width
-				= g_key_file_get_integer(conf_key, groups[i],
-							 "max-width", NULL);
-			priv->config.max_height
-				= g_key_file_get_integer(conf_key, groups[i],
-							 "max-height", NULL);
-		} else {
-			GST_DEBUG("Parse section: [%s]", groups[i]);
+		GST_DEBUG("Parse section: [%s]", groups[i]);
+		enabled = g_key_file_get_boolean(conf_key, groups[i],
+						 "enabled", &err);
+		if (err) {
+			GST_INFO("GStreamer enabled is not specified, assume enabled=true");
+			g_error_free(err);
 			err = NULL;
-			gboolean enabled = g_key_file_get_boolean(conf_key, groups[i],
-								  "enabled", &err);
-			if (err) {
-				GST_ERROR("GStreamer enabled is not specified, assume enabled=true");
-				g_error_free(err);
-				enabled = TRUE;
-			}
-			if (enabled) {
-				*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-								      "pipeline", &err);
-				if (!*pipeline_str) {
-					GST_ERROR("GStreamer pipeline is not specified");
-					g_error_free(err);
-					goto free_groups;
-				}
-				GST_DEBUG("parsed pipeline : %s", *pipeline_str);
-				if (!g_strcmp0(groups[i], "H264")) {
-					priv->config.enable_h264 = TRUE;
-					GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
-				}
-				if (!g_strcmp0(groups[i], "HEVC")) {
-					priv->config.enable_hevc = TRUE;
-					GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
-				}
-			} else {
-				GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
-			}
+			enabled = TRUE;
+		}
+		if (!enabled) {
+			GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
+			continue;
+		}
+
+		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
+						      "pipeline", &err);
+		if (!*pipeline_str) {
+			GST_ERROR("GStreamer pipeline is not specified");
+			continue;
+		}
+		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
+		if (!g_strcmp0(groups[i], "H264")) {
+			priv->config.enable_h264 = TRUE;
+			GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
+		}
+		if (!g_strcmp0(groups[i], "HEVC")) {
+			priv->config.enable_hevc = TRUE;
+			GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
 		}
 	}
-
-	ret = TRUE;
 
 free_groups:
 	g_strfreev(groups);
 free_key_file:
 	g_key_file_free(conf_key);
 
-	return ret;
+	if (!*pipeline_str)
+		GST_ERROR("no pipeline!");
+
+	return !!*pipeline_str;
 }
 
 static GstElement *
