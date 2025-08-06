@@ -138,9 +138,8 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
-		  gint *min_buffers, gint *max_width, gint *max_height,
-		  gboolean *enable_h264, gboolean *enable_hevc)
+parse_config_file(struct gst_backend_priv *priv,
+		  gchar **pipeline_str, gchar **pool_lib_path)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -164,8 +163,6 @@ parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
 		goto free_key_file;
 	}
 
-	*enable_h264 = FALSE;
-	*enable_hevc = FALSE;
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
@@ -181,19 +178,22 @@ parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
 			GST_DEBUG("external buffer pool library : %s",
 				  *pool_lib_path ? *pool_lib_path : "none");
 
-			*min_buffers = g_key_file_get_integer(conf_key, groups[i],
-							      "min-buffers", NULL);
-			if (*min_buffers == 0)
-				*min_buffers = DEF_CAP_MIN_BUFFERS;
+			priv->config.cap_min_buffers
+				= g_key_file_get_integer(conf_key, groups[i],
+							 "min-buffers", NULL);
+			if (priv->config.cap_min_buffers == 0)
+				priv->config.cap_min_buffers = DEF_CAP_MIN_BUFFERS;
 
 			GST_DEBUG("minimum number of buffers on CAPTURE "
 				  "for the GStreamer pipeline to work : %d",
-				  *min_buffers);
+				  priv->config.cap_min_buffers);
 
-			*max_width = g_key_file_get_integer(conf_key, groups[i],
-							    "max-width", NULL);
-			*max_height = g_key_file_get_integer(conf_key, groups[i],
-							     "max-height", NULL);
+			priv->config.max_width
+				= g_key_file_get_integer(conf_key, groups[i],
+							 "max-width", NULL);
+			priv->config.max_height
+				= g_key_file_get_integer(conf_key, groups[i],
+							 "max-height", NULL);
 		} else {
 			GST_DEBUG("Parse section: [%s]", groups[i]);
 			err = NULL;
@@ -214,11 +214,11 @@ parse_config_file(gchar **pipeline_str, gchar **pool_lib_path,
 				}
 				GST_DEBUG("parsed pipeline : %s", *pipeline_str);
 				if (!g_strcmp0(groups[i], "H264")) {
-					*enable_h264 = TRUE;
+					priv->config.enable_h264 = TRUE;
 					GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
 				}
 				if (!g_strcmp0(groups[i], "HEVC")) {
-					*enable_hevc = TRUE;
+					priv->config.enable_hevc = TRUE;
 					GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
 				}
 			} else {
@@ -908,12 +908,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 				"v4l-gst-ioctl", 0,
 				"debug category for v4l-gst IOCTL operation");
 
-	if (!parse_config_file(&pipeline_str, &pool_lib_path,
-			       &priv->config.cap_min_buffers,
-			       &priv->config.max_width,
-			       &priv->config.max_height,
-			       &priv->config.enable_h264,
-			       &priv->config.enable_hevc))
+	if (!parse_config_file(priv, &pipeline_str, &pool_lib_path))
 		goto error;
 
 	priv->pipeline = create_pipeline(pipeline_str);
