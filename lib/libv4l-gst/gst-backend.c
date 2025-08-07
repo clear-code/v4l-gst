@@ -471,100 +471,95 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 
 static gboolean
 get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_fmts,
-			       gint *out_fmts_num, gboolean enable_hevc)
+			       gint *out_fmts_num, gboolean use_appsrc)
 {
-#if ENABLE_MULTIPLE_PIPELINE
-	guint index = 0;
+	if (use_appsrc) {
+		GST_DEBUG("use_appsrc: TRUE");
+		GstCaps *caps;
+		GstStructure *structure;
+		const gchar *mime;
+		guint fourcc;
 
-	*out_fmts_num = 1;
-	if (priv->config.enable_h264)
-		*out_fmts_num += 1;
-	if (priv->config.enable_hevc)
-		*out_fmts_num += 1;
-	*out_fmts = g_new0(struct fmts, *out_fmts_num);
+		caps = get_peer_pad_template_caps(priv->appsrc, "src");
 
-	index = 0;
-	(*out_fmts)[index].fmt = V4L2_PIX_FMT_VP8;
-	g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
-	if (priv->config.enable_h264) {
-		index++;
-		(*out_fmts)[index].fmt = V4L2_PIX_FMT_H264;
-		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-	}
-	if (priv->config.enable_hevc) {
-		index++;
-		(*out_fmts)[index].fmt = V4L2_PIX_FMT_HEVC;
-		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
-	}
-	if (priv->config.enable_h264 && priv->config.enable_hevc) {
-		GST_DEBUG("out supported codecs : vp8, h264, hevc");
-	} else if (priv->config.enable_h264) {
-		GST_DEBUG("out supported codecs : vp8, h264");
-	} else if (priv->config.enable_hevc) {
-		GST_DEBUG("out supported codecs : vp8, hevc");
-	} else {
-		GST_DEBUG("out supported codecs : vp8");
-	}
-#else
-	GstCaps *caps;
-	GstStructure *structure;
-	const gchar *mime;
-	guint fourcc;
+		if (gst_caps_is_any(caps)) {
+			GST_DEBUG("caps is any");
+			/* H.264 and VP8 codecs are supported in this plugin.
+			   We treat all the codecs when GST_CAPS_ANY is set as
+			   a template caps. */
+			*out_fmts_num = 2;
+			*out_fmts = g_new0(struct fmts, *out_fmts_num);
 
-	caps = get_peer_pad_template_caps(appsrc, "src");
+			(*out_fmts)[0].fmt = V4L2_PIX_FMT_H264;
+			(*out_fmts)[1].fmt = V4L2_PIX_FMT_VP8;
+			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+			g_strlcpy((*out_fmts)[1].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
 
-	if (gst_caps_is_any(caps)) {
-		/* H.264 and VP8 codecs are supported in this plugin.
-		   We treat all the codecs when GST_CAPS_ANY is set as
-		   a template caps. */
-		*out_fmts_num = 2;
-		*out_fmts = g_new0(struct fmts, *out_fmts_num);
+			GST_DEBUG("out supported codecs : h264, vp8");
+		} else {
+			GST_DEBUG("caps is not any");
+			structure = gst_caps_get_structure(caps, 0);
+			mime = gst_structure_get_name(structure);
 
-		(*out_fmts)[0].fmt = V4L2_PIX_FMT_H264;
-		(*out_fmts)[1].fmt = V4L2_PIX_FMT_VP8;
-		g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		g_strlcpy((*out_fmts)[1].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
-
-		GST_DEBUG("out supported codecs : h264, vp8");
-	} else {
-		structure = gst_caps_get_structure(caps, 0);
-		mime = gst_structure_get_name(structure);
-
-		if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
-			fourcc = V4L2_PIX_FMT_H264;
-		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_VP8) == 0) {
-			fourcc = V4L2_PIX_FMT_VP8;
-		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
-			if (enable_hevc) {
+			if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
+				fourcc = V4L2_PIX_FMT_H264;
+			} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_VP8) == 0) {
+				fourcc = V4L2_PIX_FMT_VP8;
+			} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
 				fourcc = V4L2_PIX_FMT_HEVC;
 			} else {
-				GST_ERROR("Disabled HEVC pipeline for codec : %s", mime);
+				GST_ERROR("Unsupported codec : %s", mime);
 				gst_caps_unref(caps);
 				return FALSE;
 			}
-		} else {
-			GST_ERROR("Unsupported codec : %s", mime);
-			gst_caps_unref(caps);
-			return FALSE;
-		}
+			GST_DEBUG("out supported codec : %s", mime);
 
-		GST_DEBUG("out supported codec : %s", mime);
+			*out_fmts_num = 1;
+			*out_fmts = g_new0(struct fmts, *out_fmts_num);
+
+			(*out_fmts)[0].fmt = fourcc;
+			if(fourcc == V4L2_PIX_FMT_H264)
+				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+			else if (fourcc == V4L2_PIX_FMT_HEVC)
+				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
+			else
+				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
+		}
+		gst_caps_unref(caps);
+	} else {
+		GST_DEBUG("use_appsrc: FALSE, construct fmts from configuration");
+		guint index = 0;
 
 		*out_fmts_num = 1;
+		if (priv->config.enable_h264)
+			*out_fmts_num += 1;
+		if (priv->config.enable_hevc)
+			*out_fmts_num += 1;
 		*out_fmts = g_new0(struct fmts, *out_fmts_num);
 
-		(*out_fmts)[0].fmt = fourcc;
-		if(fourcc == V4L2_PIX_FMT_H264)
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		else if (fourcc == V4L2_PIX_FMT_HEVC)
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-		else
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
+		index = 0;
+		(*out_fmts)[index].fmt = V4L2_PIX_FMT_VP8;
+		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
+		if (priv->config.enable_h264) {
+			index++;
+			(*out_fmts)[index].fmt = V4L2_PIX_FMT_H264;
+			g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+		}
+		if (priv->config.enable_hevc) {
+			index++;
+			(*out_fmts)[index].fmt = V4L2_PIX_FMT_HEVC;
+			g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
+		}
+		if (priv->config.enable_h264 && priv->config.enable_hevc) {
+			GST_DEBUG("out supported codecs : vp8, h264, hevc");
+		} else if (priv->config.enable_h264) {
+			GST_DEBUG("out supported codecs : vp8, h264");
+		} else if (priv->config.enable_hevc) {
+			GST_DEBUG("out supported codecs : vp8, hevc");
+		} else {
+			GST_DEBUG("out supported codecs : vp8");
+		}
 	}
-
-	gst_caps_unref(caps);
-
-#endif
 	return TRUE;
 }
 
@@ -931,7 +926,7 @@ init_app_elements(struct gst_backend_priv *priv)
 
 	if (!get_supported_video_format_out(priv, &out_fmts,
 					    &out_fmts_num,
-					    priv->config.enable_hevc))
+					    TRUE))
 		return FALSE;
 
 	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
@@ -1403,7 +1398,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		priv->config.is_conf_parsed = TRUE;
 		if (!get_supported_video_format_out(priv, &out_fmts,
 						    &out_fmts_num,
-						    priv->config.enable_hevc)) {
+						    FALSE)) {
 		}
 		priv->out_fmts = out_fmts;
 		priv->out_fmts_num = out_fmts_num;
