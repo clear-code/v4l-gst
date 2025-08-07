@@ -214,7 +214,7 @@ free_key_file:
 }
 
 static gboolean
-parse_config_file(struct gst_backend_priv *priv, gchar **pool_lib_path)
+parse_config_file(struct gst_backend_priv *priv)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -245,14 +245,6 @@ parse_config_file(struct gst_backend_priv *priv, gchar **pool_lib_path)
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
-		*pool_lib_path
-			= g_key_file_get_string(conf_key, libv4l_gst_group,
-						"bufferpool-library",
-						NULL);
-
-		GST_DEBUG("external buffer pool library : %s",
-			  *pool_lib_path ? *pool_lib_path : "none");
-
 		priv->config.cap_min_buffers
 			= g_key_file_get_integer(conf_key, libv4l_gst_group,
 						 "min-buffers", NULL);
@@ -1404,7 +1396,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (!priv->config.is_conf_parsed) {
-		if (!parse_config_file(priv, &pool_lib_path)) {
+		if (!parse_config_file(priv)) {
 			errno = EINVAL;
 			return -1;
 		}
