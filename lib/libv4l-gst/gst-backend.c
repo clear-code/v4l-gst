@@ -214,8 +214,7 @@ free_key_file:
 }
 
 static gboolean
-parse_config_file(struct gst_backend_priv *priv,
-		  gchar **pipeline_str, gchar **pool_lib_path)
+parse_config_file(struct gst_backend_priv *priv, gchar **pool_lib_path)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -307,12 +306,12 @@ parse_config_file(struct gst_backend_priv *priv,
 			if (!g_strcmp0(groups[i], "H264")) {
 				priv->config.enable_h264 = TRUE;
 				enabled_pipelines++;
-				GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
+				GST_DEBUG("enabled H264 pipeline");
 			}
 			if (!g_strcmp0(groups[i], "HEVC")) {
 				priv->config.enable_hevc = TRUE;
 				enabled_pipelines++;
-				GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+				GST_DEBUG("enabled HEVC pipeline");
 			}
 		}
 	}
@@ -1405,7 +1404,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (!priv->config.is_conf_parsed) {
-		if (!parse_config_file(priv, &pipeline_str, &pool_lib_path)) {
+		if (!parse_config_file(priv, &pool_lib_path)) {
 			errno = EINVAL;
 			return -1;
 		}
