@@ -225,6 +225,7 @@ parse_config_file(struct gst_backend_priv *priv,
 	gchar **groups;
 	gsize n_groups;
 	gint i;
+	guint enabled_pipelines;
 
 	sys_conf_dirs = g_get_system_config_dirs();
 
@@ -294,22 +295,25 @@ parse_config_file(struct gst_backend_priv *priv,
 			continue;
 		}
 
-		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-						      "pipeline", &err);
-		if (!*pipeline_str) {
+		enabled = g_key_file_has_key(conf_key, groups[i],
+					     "pipeline", &err);
+		if (err) {
 			GST_ERROR("GStreamer pipeline is not specified");
 			if (err) g_error_free(err);
 			err = NULL;
 			continue;
 		}
-		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
-		if (!g_strcmp0(groups[i], "H264")) {
-			priv->config.enable_h264 = TRUE;
-			GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
-		}
-		if (!g_strcmp0(groups[i], "HEVC")) {
-			priv->config.enable_hevc = TRUE;
-			GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+		if (enabled) {
+			if (!g_strcmp0(groups[i], "H264")) {
+				priv->config.enable_h264 = TRUE;
+				enabled_pipelines++;
+				GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
+			}
+			if (!g_strcmp0(groups[i], "HEVC")) {
+				priv->config.enable_hevc = TRUE;
+				enabled_pipelines++;
+				GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+			}
 		}
 	}
 
@@ -317,10 +321,7 @@ parse_config_file(struct gst_backend_priv *priv,
 free_key_file:
 	g_key_file_free(conf_key);
 
-	if (!*pipeline_str)
-		GST_ERROR("no pipeline!");
-
-	return !!*pipeline_str;
+	return enabled_pipelines > 0;
 }
 
 static GstElement *
