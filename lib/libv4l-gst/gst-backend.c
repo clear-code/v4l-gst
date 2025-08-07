@@ -42,6 +42,8 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_ioctl_debug_category);
 
 #define FMTDESC_NAME_LENGTH		32  //The same size as defined int the V4L2 spec
 
+#define ENABLE_MULTIPLE_PIPELINE 1
+
 enum buffer_state {
 	V4L_GST_BUFFER_QUEUED,
 	V4L_GST_BUFFER_DEQUEUED,
@@ -122,7 +124,7 @@ struct gst_backend_priv {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
-		/* TODO: non exclusive pipeline support */
+		gboolean is_conf_parsed;
 		gboolean enable_h264;
 		gboolean enable_hevc;
 	} config;
@@ -136,6 +138,80 @@ struct gst_backend_priv {
 
 	gboolean got_eos;
 };
+
+static gboolean
+parse_config_file_gst_pipeline(struct gst_backend_priv *priv,
+			       struct v4l2_format *fmt,
+			       gchar **pipeline_str, gchar **pool_lib_path)
+
+{
+	const gchar *const *sys_conf_dirs;
+	GKeyFile *conf_key;
+	const gchar *conf_name = "libv4l-gst.conf";
+	const gchar *libv4l_gst_group = "libv4l-gst";
+	GError *err = NULL;
+	gchar **groups;
+	gsize n_groups;
+	gint i;
+
+	sys_conf_dirs = g_get_system_config_dirs();
+
+	conf_key = g_key_file_new();
+	if (!g_key_file_load_from_dirs(conf_key, conf_name,
+				       (const gchar **) sys_conf_dirs, NULL,
+				       G_KEY_FILE_NONE, &err)) {
+		GST_ERROR("Failed to load %s "
+			  "from the xdg system config directory retrieved from "
+			  "XDG_CONFIG_DIRS (%s)", conf_name, err->message);
+		g_error_free(err);
+		goto free_key_file;
+	}
+
+	GST_DEBUG("libv4l-gst configuration file is found");
+
+	/* [libv4l-gst] */
+	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
+		/* No need to check if the external bufferpool library is set,
+		   because it is not mandatory for this plugin. */
+		*pool_lib_path
+			= g_key_file_get_string(conf_key, libv4l_gst_group,
+						"bufferpool-library",
+						NULL);
+
+		GST_DEBUG("external buffer pool library : %s",
+			  *pool_lib_path ? *pool_lib_path : "none");
+	}
+	/* [H264], [HEVC], etc... */
+	groups = g_key_file_get_groups(conf_key, &n_groups);
+	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
+	for (i = 0; i < n_groups; i++) {
+		if (!g_strcmp0(groups[i], libv4l_gst_group))
+			continue;
+		if (fmt->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_H264)
+			if (g_strcmp0(groups[i], "H264"))
+				continue;
+		if (fmt->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_HEVC)
+			if (g_strcmp0(groups[i], "HEVC"))
+				continue;
+		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
+						      "pipeline", &err);
+		if (!*pipeline_str) {
+			GST_ERROR("GStreamer pipeline is not specified");
+			if (err) g_error_free(err);
+			err = NULL;
+			continue;
+		}
+		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
+	}
+
+free_key_file:
+	g_key_file_free(conf_key);
+
+	if (!*pipeline_str)
+		GST_ERROR("no pipeline matches to v4l2_format: %s!", fourcc_to_mimetype(fmt->fmt.pix.pixelformat));
+
+	return !!*pipeline_str;
+}
 
 static gboolean
 parse_config_file(struct gst_backend_priv *priv,
@@ -402,9 +478,42 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 }
 
 static gboolean
-get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
+get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_fmts,
 			       gint *out_fmts_num, gboolean enable_hevc)
 {
+#if ENABLE_MULTIPLE_PIPELINE
+	guint index = 0;
+
+	*out_fmts_num = 1;
+	if (priv->config.enable_h264)
+		*out_fmts_num += 1;
+	if (priv->config.enable_hevc)
+		*out_fmts_num += 1;
+	*out_fmts = g_new0(struct fmts, *out_fmts_num);
+
+	index = 0;
+	(*out_fmts)[index].fmt = V4L2_PIX_FMT_VP8;
+	g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
+	if (priv->config.enable_h264) {
+		index++;
+		(*out_fmts)[index].fmt = V4L2_PIX_FMT_H264;
+		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+	}
+	if (priv->config.enable_hevc) {
+		index++;
+		(*out_fmts)[index].fmt = V4L2_PIX_FMT_HEVC;
+		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
+	}
+	if (priv->config.enable_h264 && priv->config.enable_hevc) {
+		GST_DEBUG("out supported codecs : vp8, h264, hevc");
+	} else if (priv->config.enable_h264) {
+		GST_DEBUG("out supported codecs : vp8, h264");
+	} else if (priv->config.enable_hevc) {
+		GST_DEBUG("out supported codecs : vp8, hevc");
+	} else {
+		GST_DEBUG("out supported codecs : vp8");
+	}
+#else
 	GstCaps *caps;
 	GstStructure *structure;
 	const gchar *mime;
@@ -463,6 +572,7 @@ get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
 
 	gst_caps_unref(caps);
 
+#endif
 	return TRUE;
 }
 
@@ -827,7 +937,7 @@ init_app_elements(struct gst_backend_priv *priv)
 	if (!get_app_elements(priv->pipeline, &priv->appsrc, &priv->appsink))
 		return FALSE;
 
-	if (!get_supported_video_format_out(priv->appsrc, &out_fmts,
+	if (!get_supported_video_format_out(priv, &out_fmts,
 					    &out_fmts_num,
 					    priv->config.enable_hevc))
 		return FALSE;
@@ -899,8 +1009,6 @@ int
 gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 {
 	struct gst_backend_priv *priv;
-	gchar *pipeline_str = NULL;
-	gchar *pool_lib_path = NULL;
 
 	priv = calloc(1, sizeof(*priv));
 	if (!priv) {
@@ -918,24 +1026,6 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 				"v4l-gst-ioctl", 0,
 				"debug category for v4l-gst IOCTL operation");
 
-	if (!parse_config_file(priv, &pipeline_str, &pool_lib_path))
-		goto error;
-
-	priv->pipeline = create_pipeline(pipeline_str);
-
-	if (!priv->pipeline)
-		goto error;
-
-	/* Initialization regarding appsrc and appsink elements */
-	if (!init_app_elements(priv))
-		goto error;
-
-	if (!init_buffer_pool(priv, pool_lib_path)) {
-		g_mutex_clear(&priv->queue_mutex);
-		g_cond_clear(&priv->queue_cond);
-		goto error;
-	}
-
 	g_mutex_init(&priv->v4l2events.mutex);
 	priv->v4l2events.subscribed = 0;
 	priv->v4l2events.sequence = 0;
@@ -943,27 +1033,14 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 
 	g_mutex_init(&priv->dev_lock);
 
+	priv->config.is_conf_parsed = FALSE;
+	priv->config.enable_h264 = FALSE;
+	priv->config.enable_hevc = FALSE;
+
 	dev_ops_priv->gst_priv = priv;
 
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
-
+	GST_DEBUG("Initialized gst backend");
 	return 0;
-
- error:
-	if (priv->cap_buffers_queue)
-		g_queue_free(priv->cap_buffers_queue);
-	if (priv->reqbufs_queue)
-		g_queue_free(priv->reqbufs_queue);
-	g_free(priv->out_fmts);
-	g_free(priv->cap_fmts);
-	if (priv->pipeline)
-		gst_object_unref(priv->pipeline);
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
-	g_free(priv);
-
-	return -1;
 }
 
 static void
@@ -1172,10 +1249,37 @@ int
 set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
-	int ret;
+	int ret = -1;
+#if ENABLE_MULTIPLE_PIPELINE
+	gchar *pipeline_str = NULL;
+	gchar *pool_lib_path = NULL;
+#endif
 
 	GST_DEBUG("VIDIOC_S_FMT: type: %s (0x%x)",
 		  v4l2_buffer_type_to_string(fmt->type), fmt->type);
+
+#if ENABLE_MULTIPLE_PIPELINE
+	if (!parse_config_file_gst_pipeline(priv, fmt, &pipeline_str, &pool_lib_path))
+		goto error;
+
+	priv->pipeline = create_pipeline(pipeline_str);
+
+	if (!priv->pipeline)
+		goto error;
+
+	/* Initialization regarding appsrc and appsink elements */
+	if (!init_app_elements(priv))
+		goto error;
+
+	if (!init_buffer_pool(priv, pool_lib_path)) {
+		g_mutex_clear(&priv->queue_mutex);
+		g_cond_clear(&priv->queue_cond);
+		goto error;
+	}
+
+	g_free(pipeline_str);
+	g_free(pool_lib_path);
+#endif
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1190,7 +1294,21 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	}
 
 	g_mutex_unlock(&priv->dev_lock);
+	return ret;
 
+ error:
+	if (priv->cap_buffers_queue)
+		g_queue_free(priv->cap_buffers_queue);
+	if (priv->reqbufs_queue)
+		g_queue_free(priv->reqbufs_queue);
+	g_free(priv->out_fmts);
+	g_free(priv->cap_fmts);
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+	g_free(pipeline_str);
+	g_free(pool_lib_path);
+
+	GST_ERROR("Failed to initialize pipeline on demand");
 	return ret;
 }
 
@@ -1274,14 +1392,46 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 	gint fmts_num;
 	gchar fourcc_str[5];
 
+#if ENABLE_MULTIPLE_PIPELINE
+	gchar *pipeline_str = NULL;
+	gchar *pool_lib_path = NULL;
+	struct fmts *out_fmts;
+	gint out_fmts_num;
+	struct fmts *cap_fmts;
+	gint cap_fmts_num;
+
 	GST_DEBUG("VIDIOC_ENUM_FMT: type: %s (0x%x) index: %d",
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
+	if (!priv->config.is_conf_parsed) {
+		if (!parse_config_file(priv, &pipeline_str, &pool_lib_path)) {
+			errno = EINVAL;
+			return -1;
+		}
+		priv->config.is_conf_parsed = TRUE;
+		if (!get_supported_video_format_out(priv, &out_fmts,
+						    &out_fmts_num,
+						    priv->config.enable_hevc)) {
+		}
+		priv->out_fmts = out_fmts;
+		priv->out_fmts_num = out_fmts_num;
+
+#if 0
+		// FIXME: support cap_fmts here
+		if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
+						    &cap_fmts_num)) {
+		}
+		priv->cap_fmts = cap_fmts;
+		priv->cap_fmts_num = cap_fmts_num;
+#endif
+	}
+#else
 	if (!priv->out_fmts || !priv->cap_fmts) {
 		GST_ERROR("Supported formats lists are not prepared");
 		errno = EINVAL;
 		return -1;
 	}
+#endif
 
 	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		fmts = priv->out_fmts;
