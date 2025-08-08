@@ -36,7 +36,6 @@ The setting file location is `/etc/xdg/libv4l-gst.conf`
 It also supports format specific configuration section:
 
 * **pipeline**: The GStreamer pipeline to be used.  Should include everything but the input and output nodes
-* **enabled**: pipeline Should be enabled or not, Set true or false. (default: true)
 
 ### Example
 The following settings are for the Renesas Porter board,
@@ -50,11 +49,9 @@ min-buffers=2
 
 [H264]
 pipeline=h264parse ! omxh264dec ! queue max-size-bytes=0 max-size-time=0 max-size-buffers=0 ! vspfilter
-enabled=true
 
 [HEVC]
 pipeline=h265parse ! omxh265dec
-enabled=true
 ```
 
 Running
