@@ -564,8 +564,8 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 }
 
 static gboolean
-get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
-			       gint *cap_fmts_num)
+get_supported_video_format_cap(struct gst_backend_priv *priv, struct fmts **cap_fmts,
+			       gint *cap_fmts_num, gboolean use_appsink)
 {
 	GstCaps *caps;
 	GstStructure *structure;
@@ -579,67 +579,90 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 	guint i, j;
 	struct fmts *color_fmts = NULL;
 
-	caps = get_peer_pad_template_caps(appsink, "sink");
+	if (use_appsink) {
+		caps = get_peer_pad_template_caps(priv->appsink, "sink");
 
-	/* We treat GST_CAPS_ANY as all video formats support. */
-	if (gst_caps_is_any(caps)) {
-		gst_caps_unref(caps);
-		caps = gst_caps_from_string
+		/* We treat GST_CAPS_ANY as all video formats support. */
+		if (gst_caps_is_any(caps)) {
+			GST_DEBUG("RZG: caps is any");
+			gst_caps_unref(caps);
+			caps = gst_caps_from_string
 				("video/x-raw, format=" GST_VIDEO_FORMATS_ALL);
-	}
+		}
+		GST_DEBUG("RZG: GST_VIDEO_FORMATS_ALL: %s", GST_VIDEO_FORMATS_ALL);
 
-	structs = gst_caps_get_size(caps);
-	list_size = 2; // Add space for legacy RGB formats if available */
-	fmts_num = 0;
+		structs = gst_caps_get_size(caps);
+		list_size = 2; // Add space for legacy RGB formats if available */
+		fmts_num = 0;
 
-	for (j = 0; j < structs; j++) {
-	        gint num_cap_formats;
-		structure = gst_caps_get_structure(caps, j);
-		val = gst_structure_get_value(structure, "format");
-		if (!val)
-			continue;
-
-		num_cap_formats = gst_value_list_get_size(val);
-		list_size += num_cap_formats;
-		color_fmts = g_renew(struct fmts, color_fmts, list_size);
-
-		for (i = 0; i < num_cap_formats; i++) {
-			list_val = gst_value_list_get_value(val, i);
-			fmt_str = g_value_get_string(list_val);
-
-			fmt = gst_video_format_from_string(fmt_str);
-			if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
-				GST_ERROR("Unknown video format : %s", fmt_str);
+		GST_DEBUG("RZG: gst_caps_get_size: %u", structs);
+		for (j = 0; j < structs; j++) {
+			GST_DEBUG("RZG: struct[%u]", structs);
+			gint num_cap_formats;
+			structure = gst_caps_get_structure(caps, j);
+			val = gst_structure_get_value(structure, "format");
+			if (!val)
 				continue;
-			}
 
-			fourcc = fourcc_from_gst_video_format(fmt);
-			if (fourcc == 0) {
-				GST_DEBUG("Failed to convert video format "
-					  "from gst to v4l2 : %s", fmt_str);
-				continue;
-			}
+			num_cap_formats = gst_value_list_get_size(val);
+			GST_DEBUG("RZG: struct[%u] num_cap_formats: %u", structs, num_cap_formats);
+			list_size += num_cap_formats;
+			GST_DEBUG("RZG: struct[%u] num_cap_formats: %u changed list_size: %u", structs, num_cap_formats, list_size);
+			color_fmts = g_renew(struct fmts, color_fmts, list_size);
 
-			GST_DEBUG("cap supported video format : %s", fmt_str);
+			for (i = 0; i < num_cap_formats; i++) {
+				GST_DEBUG("RZG: struct[%u] num_cap_formats[%u]", structs, i);
+				list_val = gst_value_list_get_value(val, i);
+				fmt_str = g_value_get_string(list_val);
 
-			color_fmts[fmts_num].fmt = fourcc;
-			g_strlcpy(color_fmts[fmts_num++].fmt_char, fmt_str,
-				FMTDESC_NAME_LENGTH);
+				GST_DEBUG("RZG: struct[%u] num_cap_formats[%u] fmt_str: %s", structs, i, fmt_str);
+				fmt = gst_video_format_from_string(fmt_str);
+				if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
+					GST_ERROR("Unknown video format : %s", fmt_str);
+					continue;
+				}
 
-			/* Add legacy RGB formats */
-			if (fourcc == V4L2_PIX_FMT_ARGB32) {
-				color_fmts[fmts_num].fmt = V4L2_PIX_FMT_RGB32;
-				g_strlcpy(color_fmts[fmts_num++].fmt_char,
-					fmt_str, FMTDESC_NAME_LENGTH);
-			} else if (fourcc == V4L2_PIX_FMT_ABGR32) {
-				color_fmts[fmts_num].fmt = V4L2_PIX_FMT_BGR32;
-				g_strlcpy(color_fmts[fmts_num++].fmt_char,
-					fmt_str, FMTDESC_NAME_LENGTH);
+				fourcc = fourcc_from_gst_video_format(fmt);
+				if (fourcc == 0) {
+					GST_DEBUG("Failed to convert video format "
+						  "from gst to v4l2 : %s", fmt_str);
+					continue;
+				}
+
+				GST_DEBUG("cap supported video format : %s", fmt_str);
+
+				color_fmts[fmts_num].fmt = fourcc;
+				g_strlcpy(color_fmts[fmts_num++].fmt_char, fmt_str,
+					  FMTDESC_NAME_LENGTH);
+
+				/* Add legacy RGB formats */
+				if (fourcc == V4L2_PIX_FMT_ARGB32) {
+					color_fmts[fmts_num].fmt = V4L2_PIX_FMT_RGB32;
+					g_strlcpy(color_fmts[fmts_num++].fmt_char,
+						  fmt_str, FMTDESC_NAME_LENGTH);
+				} else if (fourcc == V4L2_PIX_FMT_ABGR32) {
+					color_fmts[fmts_num].fmt = V4L2_PIX_FMT_BGR32;
+					g_strlcpy(color_fmts[fmts_num++].fmt_char,
+						  fmt_str, FMTDESC_NAME_LENGTH);
+				}
 			}
 		}
-	}
 
-	gst_caps_unref(caps);
+		gst_caps_unref(caps);
+	} else {
+		GST_DEBUG("cap supported video format : NV12 and I420");
+		list_size = 2; // NV12 and I420 explicitly
+		fmts_num = 0;
+		color_fmts = g_renew(struct fmts, color_fmts, 2);
+		fmt = gst_video_format_from_string("NV12");
+		fourcc = fourcc_from_gst_video_format(fmt);
+		color_fmts[fmts_num].fmt = fourcc;
+		g_strlcpy(color_fmts[fmts_num++].fmt_char, "NV12", FMTDESC_NAME_LENGTH);
+		fmt = gst_video_format_from_string("I420");
+		fourcc = fourcc_from_gst_video_format(fmt);
+		color_fmts[fmts_num].fmt = fourcc;
+		g_strlcpy(color_fmts[fmts_num++].fmt_char, "I420", FMTDESC_NAME_LENGTH);
+	}
 
 	if (fmts_num == 0) {
 		GST_ERROR("Failed to get video formats from caps");
@@ -930,7 +953,7 @@ init_app_elements(struct gst_backend_priv *priv)
 		return FALSE;
 
 	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
-					    &cap_fmts_num)) {
+					    &cap_fmts_num, TRUE)) {
 		g_free(out_fmts);
 		return FALSE;
 	}
@@ -1409,14 +1432,12 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		priv->out_fmts = out_fmts;
 		priv->out_fmts_num = out_fmts_num;
 
-#if 0
 		// FIXME: support cap_fmts here
 		if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
-						    &cap_fmts_num)) {
+						    &cap_fmts_num, FALSE)) {
 		}
 		priv->cap_fmts = cap_fmts;
 		priv->cap_fmts_num = cap_fmts_num;
-#endif
 	}
 #else
 	if (!priv->out_fmts || !priv->cap_fmts) {
