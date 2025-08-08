@@ -127,6 +127,7 @@ struct gst_backend_priv {
 		gboolean is_conf_parsed;
 		gboolean enable_h264;
 		gboolean enable_hevc;
+		gchar *pool_lib_path;
 	} config;
 
 	struct {
@@ -245,6 +246,13 @@ parse_config_file(struct gst_backend_priv *priv)
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
+		priv->config.pool_lib_path
+			= g_key_file_get_string(conf_key, libv4l_gst_group,
+						"bufferpool-library",
+						NULL);
+		GST_DEBUG("external buffer pool library : %s",
+			  priv->config.pool_lib_path ? priv->config.pool_lib_path : "none");
+
 		priv->config.cap_min_buffers
 			= g_key_file_get_integer(conf_key, libv4l_gst_group,
 						 "min-buffers", NULL);
@@ -974,12 +982,12 @@ init_app_elements(struct gst_backend_priv *priv)
 }
 
 static gboolean
-init_buffer_pool(struct gst_backend_priv *priv, gchar *pool_lib_path)
+init_buffer_pool(struct gst_backend_priv *priv)
 {
 	/* Get the external buffer pool when it is specified in
 	   the configuration file */
-	if (pool_lib_path) {
-		get_buffer_pool_ops(pool_lib_path,
+	if (priv->config.pool_lib_path) {
+		get_buffer_pool_ops(priv->config.pool_lib_path,
 				    &priv->pool_lib_handle, &priv->pool_ops);
 	}
 
@@ -1206,7 +1214,7 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		if (!init_app_elements(priv))
 			goto error;
 
-		if (!init_buffer_pool(priv, pool_lib_path)) {
+		if (!init_buffer_pool(priv)) {
 			g_mutex_clear(&priv->queue_mutex);
 			g_cond_clear(&priv->queue_cond);
 			goto error;
