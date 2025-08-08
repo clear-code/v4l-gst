@@ -1004,21 +1004,26 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	if (priv->cap_buffers)
 		g_free(priv->cap_buffers);
 
-	gst_object_unref(priv->src_pool);
-	gst_object_unref(priv->sink_pool);
+	if (priv->src_pool)
+		gst_object_unref(priv->src_pool);
+	if (priv->sink_pool)
+		gst_object_unref(priv->sink_pool);
 
 	g_free(priv->out_fmts);
 	g_free(priv->cap_fmts);
 
-	g_queue_free(priv->cap_buffers_queue);
-	g_queue_free(priv->reqbufs_queue);
+	if (priv->cap_buffers_queue)
+		g_queue_free(priv->cap_buffers_queue);
+	if (priv->reqbufs_queue)
+		g_queue_free(priv->reqbufs_queue);
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
 	g_mutex_clear(&priv->cap_reqbuf_mutex);
 	g_cond_clear(&priv->cap_reqbuf_cond);
 
-	gst_object_unref(priv->pipeline);
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
 
 	g_free(priv->config.h264_pipeline);
 	g_free(priv->config.hevc_pipeline);
