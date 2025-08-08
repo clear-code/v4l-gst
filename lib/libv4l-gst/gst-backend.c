@@ -1020,6 +1020,10 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 
 	gst_object_unref(priv->pipeline);
 
+	g_free(priv->config.h264_pipeline);
+	g_free(priv->config.hevc_pipeline);
+	g_free(priv->config.pool_lib_path);
+
 	GST_DEBUG("gst_backend_deinit end");
 }
 
