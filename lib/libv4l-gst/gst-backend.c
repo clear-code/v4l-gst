@@ -1154,7 +1154,7 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 
 	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts_num > 0)
 		priv->cap_pix_fmt.pixelformat =	priv->cap_fmts[0].fmt;
-
+	return 0;
  error:
 	if (priv->cap_buffers_queue)
 		g_queue_free(priv->cap_buffers_queue);
