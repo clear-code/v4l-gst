@@ -143,80 +143,6 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_config_file_gst_pipeline(struct gst_backend_priv *priv,
-			       struct v4l2_format *fmt,
-			       gchar **pipeline_str, gchar **pool_lib_path)
-
-{
-	const gchar *const *sys_conf_dirs;
-	GKeyFile *conf_key;
-	const gchar *conf_name = "libv4l-gst.conf";
-	const gchar *libv4l_gst_group = "libv4l-gst";
-	GError *err = NULL;
-	gchar **groups;
-	gsize n_groups;
-	gint i;
-
-	sys_conf_dirs = g_get_system_config_dirs();
-
-	conf_key = g_key_file_new();
-	if (!g_key_file_load_from_dirs(conf_key, conf_name,
-				       (const gchar **) sys_conf_dirs, NULL,
-				       G_KEY_FILE_NONE, &err)) {
-		GST_ERROR("Failed to load %s "
-			  "from the xdg system config directory retrieved from "
-			  "XDG_CONFIG_DIRS (%s)", conf_name, err->message);
-		g_error_free(err);
-		goto free_key_file;
-	}
-
-	GST_DEBUG("libv4l-gst configuration file is found");
-
-	/* [libv4l-gst] */
-	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
-		/* No need to check if the external bufferpool library is set,
-		   because it is not mandatory for this plugin. */
-		*pool_lib_path
-			= g_key_file_get_string(conf_key, libv4l_gst_group,
-						"bufferpool-library",
-						NULL);
-
-		GST_DEBUG("external buffer pool library : %s",
-			  *pool_lib_path ? *pool_lib_path : "none");
-	}
-	/* [H264], [HEVC], etc... */
-	groups = g_key_file_get_groups(conf_key, &n_groups);
-	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
-	for (i = 0; i < n_groups; i++) {
-		if (!g_strcmp0(groups[i], libv4l_gst_group))
-			continue;
-		if (fmt->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_H264)
-			if (g_strcmp0(groups[i], "H264"))
-				continue;
-		if (fmt->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_HEVC)
-			if (g_strcmp0(groups[i], "HEVC"))
-				continue;
-		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-						      "pipeline", &err);
-		if (!*pipeline_str) {
-			GST_ERROR("GStreamer pipeline is not specified");
-			if (err) g_error_free(err);
-			err = NULL;
-			continue;
-		}
-		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
-	}
-
-free_key_file:
-	g_key_file_free(conf_key);
-
-	if (!*pipeline_str)
-		GST_ERROR("no pipeline matches to v4l2_format: %s!", fourcc_to_mimetype(fmt->fmt.pix.pixelformat));
-
-	return !!*pipeline_str;
-}
-
-static gboolean
 parse_config_file(struct gst_backend_priv *priv)
 {
 	const gchar *const *sys_conf_dirs;
@@ -1189,9 +1115,6 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 
 #if ENABLE_MULTIPLE_PIPELINE
 	if (!priv->pipeline) {
-		if (!parse_config_file_gst_pipeline(priv, fmt, &pipeline_str, &pool_lib_path))
-			goto error;
-
 		if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
 			GST_DEBUG("create H264 pipeline");
 			priv->pipeline = create_pipeline(priv->config.h264_pipeline);
