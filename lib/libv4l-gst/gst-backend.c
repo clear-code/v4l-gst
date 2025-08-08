@@ -491,9 +491,7 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 			*out_fmts = g_new0(struct fmts, *out_fmts_num);
 
 			(*out_fmts)[0].fmt = V4L2_PIX_FMT_H264;
-			(*out_fmts)[1].fmt = V4L2_PIX_FMT_VP8;
 			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-			g_strlcpy((*out_fmts)[1].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
 
 			GST_DEBUG("out supported codecs : h264, vp8");
 		} else {
@@ -503,8 +501,6 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 
 			if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
 				fourcc = V4L2_PIX_FMT_H264;
-			} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_VP8) == 0) {
-				fourcc = V4L2_PIX_FMT_VP8;
 			} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
 				fourcc = V4L2_PIX_FMT_HEVC;
 			} else {
@@ -522,8 +518,6 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
 			else if (fourcc == V4L2_PIX_FMT_HEVC)
 				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-			else
-				g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
 		}
 		gst_caps_unref(caps);
 	} else {
@@ -538,8 +532,6 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 		*out_fmts = g_new0(struct fmts, *out_fmts_num);
 
 		index = 0;
-		(*out_fmts)[index].fmt = V4L2_PIX_FMT_VP8;
-		g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
 		if (priv->config.enable_h264) {
 			index++;
 			(*out_fmts)[index].fmt = V4L2_PIX_FMT_H264;
@@ -551,13 +543,13 @@ get_supported_video_format_out(struct gst_backend_priv *priv, struct fmts **out_
 			g_strlcpy((*out_fmts)[index].fmt_char, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
 		}
 		if (priv->config.enable_h264 && priv->config.enable_hevc) {
-			GST_DEBUG("out supported codecs : vp8, h264, hevc");
+			GST_DEBUG("out supported codecs : h264, hevc");
 		} else if (priv->config.enable_h264) {
-			GST_DEBUG("out supported codecs : vp8, h264");
+			GST_DEBUG("out supported codecs : h264");
 		} else if (priv->config.enable_hevc) {
-			GST_DEBUG("out supported codecs : vp8, hevc");
+			GST_DEBUG("out supported codecs : hevc");
 		} else {
-			GST_DEBUG("out supported codecs : vp8");
+			GST_DEBUG("out supported codecs : nothing");
 		}
 	}
 	return TRUE;
