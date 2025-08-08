@@ -127,6 +127,8 @@ struct gst_backend_priv {
 		gboolean is_conf_parsed;
 		gboolean enable_h264;
 		gboolean enable_hevc;
+		gchar *h264_pipeline;
+		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
 	} config;
 
@@ -275,44 +277,29 @@ parse_config_file(struct gst_backend_priv *priv)
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		gboolean enabled;
-
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
-		enabled = g_key_file_get_boolean(conf_key, groups[i],
-						 "enabled", &err);
-		if (err) {
-			GST_INFO("GStreamer enabled is not specified, assume enabled=true");
-			g_error_free(err);
-			err = NULL;
-			enabled = TRUE;
-		}
-		if (!enabled) {
-			GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
-			continue;
-		}
-
-		enabled = g_key_file_has_key(conf_key, groups[i],
-					     "pipeline", &err);
+		gchar *pipeline_str
+			= g_key_file_get_string(conf_key, groups[i],
+						"pipeline", &err);
 		if (err) {
 			GST_ERROR("GStreamer pipeline is not specified");
 			if (err) g_error_free(err);
 			err = NULL;
 			continue;
 		}
-		if (enabled) {
-			if (!g_strcmp0(groups[i], "H264")) {
-				priv->config.enable_h264 = TRUE;
-				enabled_pipelines++;
-				GST_DEBUG("enabled H264 pipeline");
-			}
-			if (!g_strcmp0(groups[i], "HEVC")) {
-				priv->config.enable_hevc = TRUE;
-				enabled_pipelines++;
-				GST_DEBUG("enabled HEVC pipeline");
-			}
+		if (!g_strcmp0(groups[i], "H264")) {
+			priv->config.enable_h264 = TRUE;
+			priv->config.h264_pipeline = pipeline_str;
+			enabled_pipelines++;
+			GST_DEBUG("enabled H264 pipeline: %s", pipeline_str);
+		} else if (!g_strcmp0(groups[i], "HEVC")) {
+			priv->config.enable_hevc = TRUE;
+			priv->config.hevc_pipeline = pipeline_str;
+			enabled_pipelines++;
+			GST_DEBUG("enabled HEVC pipeline: %s", pipeline_str);
 		}
 	}
 
@@ -952,7 +939,7 @@ init_app_elements(struct gst_backend_priv *priv)
 					    TRUE))
 		return FALSE;
 
-	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
+	if (!get_supported_video_format_cap(priv, &cap_fmts,
 					    &cap_fmts_num, TRUE)) {
 		g_free(out_fmts);
 		return FALSE;
@@ -1205,7 +1192,13 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		if (!parse_config_file_gst_pipeline(priv, fmt, &pipeline_str, &pool_lib_path))
 			goto error;
 
-		priv->pipeline = create_pipeline(pipeline_str);
+		if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
+			GST_DEBUG("create H264 pipeline");
+			priv->pipeline = create_pipeline(priv->config.h264_pipeline);
+		} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
+			GST_DEBUG("create HEVC pipeline");
+			priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+		}
 
 		if (!priv->pipeline)
 			goto error;
@@ -1433,7 +1426,7 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		priv->out_fmts_num = out_fmts_num;
 
 		// FIXME: support cap_fmts here
-		if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
+		if (!get_supported_video_format_cap(priv, &cap_fmts,
 						    &cap_fmts_num, FALSE)) {
 		}
 		priv->cap_fmts = cap_fmts;
