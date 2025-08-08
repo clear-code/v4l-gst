@@ -1086,11 +1086,6 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 
-#if ENABLE_MULTIPLE_PIPELINE
-	gchar *pipeline_str = NULL;
-	gchar *pool_lib_path = NULL;
-#endif
-
 #if 0
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
@@ -1139,9 +1134,6 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 			g_cond_clear(&priv->queue_cond);
 			goto error;
 		}
-
-		g_free(pipeline_str);
-		g_free(pool_lib_path);
 	} else {
 		GST_WARNING("pipeline should not be created twice");
 	}
@@ -1164,9 +1156,6 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 	g_free(priv->cap_fmts);
 	if (priv->pipeline)
 		gst_object_unref(priv->pipeline);
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
-
 	return 0;
 }
 
