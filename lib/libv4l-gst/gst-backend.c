@@ -1023,6 +1023,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->config.is_conf_parsed = FALSE;
 	priv->config.enable_h264 = FALSE;
 	priv->config.enable_hevc = FALSE;
+	priv->pipeline = NULL;
 
 	dev_ops_priv->gst_priv = priv;
 
@@ -1145,6 +1146,12 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 
+#if ENABLE_MULTIPLE_PIPELINE
+	gchar *pipeline_str = NULL;
+	gchar *pool_lib_path = NULL;
+#endif
+
+#if 0
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
 		GST_ERROR("The pipeline is already running");
@@ -1153,6 +1160,7 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 	GST_OBJECT_UNLOCK(priv->pipeline);
+#endif
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
@@ -1169,6 +1177,33 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
+#if ENABLE_MULTIPLE_PIPELINE
+	if (!priv->pipeline) {
+		if (!parse_config_file_gst_pipeline(priv, fmt, &pipeline_str, &pool_lib_path))
+			goto error;
+
+		priv->pipeline = create_pipeline(pipeline_str);
+
+		if (!priv->pipeline)
+			goto error;
+
+		/* Initialization regarding appsrc and appsink elements */
+		if (!init_app_elements(priv))
+			goto error;
+
+		if (!init_buffer_pool(priv, pool_lib_path)) {
+			g_mutex_clear(&priv->queue_mutex);
+			g_cond_clear(&priv->queue_cond);
+			goto error;
+		}
+
+		g_free(pipeline_str);
+		g_free(pool_lib_path);
+	} else {
+		GST_WARNING("pipeline should not be created twice");
+	}
+#endif
+
 	priv->out_fourcc = pix_fmt->pixelformat;
 	priv->out_buf_size = pix_fmt->plane_fmt[0].sizeimage;
 
@@ -1176,6 +1211,18 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 
 	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts_num > 0)
 		priv->cap_pix_fmt.pixelformat =	priv->cap_fmts[0].fmt;
+
+ error:
+	if (priv->cap_buffers_queue)
+		g_queue_free(priv->cap_buffers_queue);
+	if (priv->reqbufs_queue)
+		g_queue_free(priv->reqbufs_queue);
+	g_free(priv->out_fmts);
+	g_free(priv->cap_fmts);
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+	g_free(pipeline_str);
+	g_free(pool_lib_path);
 
 	return 0;
 }
@@ -1236,37 +1283,10 @@ int
 set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
-	int ret = -1;
-#if ENABLE_MULTIPLE_PIPELINE
-	gchar *pipeline_str = NULL;
-	gchar *pool_lib_path = NULL;
-#endif
+	int ret;
 
 	GST_DEBUG("VIDIOC_S_FMT: type: %s (0x%x)",
 		  v4l2_buffer_type_to_string(fmt->type), fmt->type);
-
-#if ENABLE_MULTIPLE_PIPELINE
-	if (!parse_config_file_gst_pipeline(priv, fmt, &pipeline_str, &pool_lib_path))
-		goto error;
-
-	priv->pipeline = create_pipeline(pipeline_str);
-
-	if (!priv->pipeline)
-		goto error;
-
-	/* Initialization regarding appsrc and appsink elements */
-	if (!init_app_elements(priv))
-		goto error;
-
-	if (!init_buffer_pool(priv, pool_lib_path)) {
-		g_mutex_clear(&priv->queue_mutex);
-		g_cond_clear(&priv->queue_cond);
-		goto error;
-	}
-
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
-#endif
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -1281,21 +1301,7 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 	}
 
 	g_mutex_unlock(&priv->dev_lock);
-	return ret;
 
- error:
-	if (priv->cap_buffers_queue)
-		g_queue_free(priv->cap_buffers_queue);
-	if (priv->reqbufs_queue)
-		g_queue_free(priv->reqbufs_queue);
-	g_free(priv->out_fmts);
-	g_free(priv->cap_fmts);
-	if (priv->pipeline)
-		gst_object_unref(priv->pipeline);
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
-
-	GST_ERROR("Failed to initialize pipeline on demand");
 	return ret;
 }
 
