@@ -122,9 +122,10 @@ struct gst_backend_priv {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
-		/* TODO: non exclusive pipeline support */
-		gboolean enable_h264;
-		gboolean enable_hevc;
+		gboolean is_parsed;
+		gchar *h264_pipeline;
+		gchar *hevc_pipeline;
+		gchar *pool_lib_path;
 	} config;
 
 	struct {
@@ -138,8 +139,7 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_config_file(struct gst_backend_priv *priv,
-		  gchar **pipeline_str, gchar **pool_lib_path)
+parse_config_file(struct gst_backend_priv *priv)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -149,6 +149,7 @@ parse_config_file(struct gst_backend_priv *priv,
 	gchar **groups;
 	gsize n_groups;
 	gint i;
+	guint n_pipelines = 0;
 
 	sys_conf_dirs = g_get_system_config_dirs();
 
@@ -169,13 +170,12 @@ parse_config_file(struct gst_backend_priv *priv,
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
-		*pool_lib_path
+		priv->config.pool_lib_path
 			= g_key_file_get_string(conf_key, libv4l_gst_group,
 						"bufferpool-library",
 						NULL);
-
 		GST_DEBUG("external buffer pool library : %s",
-			  *pool_lib_path ? *pool_lib_path : "none");
+			  priv->config.pool_lib_path ? priv->config.pool_lib_path : "none");
 
 		priv->config.cap_min_buffers
 			= g_key_file_get_integer(conf_key, libv4l_gst_group,
@@ -199,41 +199,27 @@ parse_config_file(struct gst_backend_priv *priv,
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		gboolean enabled;
-
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
-		enabled = g_key_file_get_boolean(conf_key, groups[i],
-						 "enabled", &err);
+		gchar *pipeline_str
+			= g_key_file_get_string(conf_key, groups[i],
+						"pipeline", &err);
 		if (err) {
-			GST_INFO("GStreamer enabled is not specified, assume enabled=true");
-			g_error_free(err);
-			err = NULL;
-			enabled = TRUE;
-		}
-		if (!enabled) {
-			GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
-			continue;
-		}
-
-		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-						      "pipeline", &err);
-		if (!*pipeline_str) {
 			GST_ERROR("GStreamer pipeline is not specified");
 			if (err) g_error_free(err);
 			err = NULL;
 			continue;
 		}
-		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
 		if (!g_strcmp0(groups[i], "H264")) {
-			priv->config.enable_h264 = TRUE;
-			GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
-		}
-		if (!g_strcmp0(groups[i], "HEVC")) {
-			priv->config.enable_hevc = TRUE;
-			GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+			priv->config.h264_pipeline = pipeline_str;
+			n_pipelines++;
+			GST_DEBUG("enabled H264 pipeline: %s", pipeline_str);
+		} else if (!g_strcmp0(groups[i], "HEVC")) {
+			priv->config.hevc_pipeline = pipeline_str;
+			n_pipelines++;
+			GST_DEBUG("enabled HEVC pipeline: %s", pipeline_str);
 		}
 	}
 
@@ -241,10 +227,13 @@ parse_config_file(struct gst_backend_priv *priv,
 free_key_file:
 	g_key_file_free(conf_key);
 
-	if (!*pipeline_str)
+	if (n_pipelines == 0) {
 		GST_ERROR("no pipeline!");
+	} else {
+		priv->config.is_parsed = TRUE;
+	}
 
-	return !!*pipeline_str;
+	return n_pipelines > 0;
 }
 
 static GstElement *
