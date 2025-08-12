@@ -833,6 +833,10 @@ init_app_elements(struct gst_backend_priv *priv)
 		g_free(out_fmts);
 		return FALSE;
 	}
+	if (priv->out_fmts) {
+		g_free(priv->out_fmts);
+		priv->out_fmts = NULL;
+	}
 	priv->out_fmts = out_fmts;
 	priv->out_fmts_num = out_fmts_num;
 	priv->cap_fmts = cap_fmts;
@@ -841,8 +845,6 @@ init_app_elements(struct gst_backend_priv *priv)
 	/* For queuing buffers received from appsink */
 	priv->cap_buffers_queue = g_queue_new();
 	priv->reqbufs_queue = g_queue_new();
-	g_mutex_init(&priv->queue_mutex);
-	g_cond_init(&priv->queue_cond);
 
 	/* Set the appsrc queue size to unlimited.
 	   The amount of buffers is managed by the buffer pool. */
@@ -858,12 +860,12 @@ init_app_elements(struct gst_backend_priv *priv)
 }
 
 static gboolean
-init_buffer_pool(struct gst_backend_priv *priv, gchar *pool_lib_path)
+init_buffer_pool(struct gst_backend_priv *priv)
 {
 	/* Get the external buffer pool when it is specified in
 	   the configuration file */
-	if (pool_lib_path) {
-		get_buffer_pool_ops(pool_lib_path,
+	if (priv->config.pool_lib_path) {
+		get_buffer_pool_ops(priv->config.pool_lib_path,
 				    &priv->pool_lib_handle, &priv->pool_ops);
 	}
 
@@ -876,17 +878,14 @@ init_buffer_pool(struct gst_backend_priv *priv, gchar *pool_lib_path)
 		goto free_pool;
 	}
 
-	/* To wait for the requested number of buffers on CAPTURE
-	   to be set in pad_probe_query() */
-	g_mutex_init(&priv->cap_reqbuf_mutex);
-	g_cond_init(&priv->cap_reqbuf_cond);
-
 	return TRUE;
 
 	/* error cases */
 free_pool:
-	gst_object_unref(priv->src_pool);
-	gst_object_unref(priv->sink_pool);
+	if (priv->src_pool)
+		gst_object_unref(priv->src_pool);
+	if (priv->sink_pool)
+		gst_object_unref(priv->sink_pool);
 
 	return FALSE;
 }
@@ -895,8 +894,8 @@ int
 gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 {
 	struct gst_backend_priv *priv;
-	gchar *pipeline_str = NULL;
-	gchar *pool_lib_path = NULL;
+	struct fmts *out_fmts;
+	gint out_fmts_num;
 
 	priv = calloc(1, sizeof(*priv));
 	if (!priv) {
@@ -914,23 +913,19 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 				"v4l-gst-ioctl", 0,
 				"debug category for v4l-gst IOCTL operation");
 
-	if (!parse_config_file(priv, &pipeline_str, &pool_lib_path))
-		goto error;
-
-	priv->pipeline = create_pipeline(pipeline_str);
-
-	if (!priv->pipeline)
-		goto error;
-
-	/* Initialization regarding appsrc and appsink elements */
-	if (!init_app_elements(priv))
-		goto error;
-
-	if (!init_buffer_pool(priv, pool_lib_path)) {
-		g_mutex_clear(&priv->queue_mutex);
-		g_cond_clear(&priv->queue_cond);
+	if (!parse_config_file(priv)) {
+		GST_ERROR("pipeline configuration is not found at all");
 		goto error;
 	}
+
+	if (!fill_supported_config_video_format_out(priv, &out_fmts,
+						    &out_fmts_num)) {
+		GST_ERROR("Failed to fill in supported video format");
+		errno = EINVAL;
+		return -1;
+	}
+	priv->out_fmts = out_fmts;
+	priv->out_fmts_num = out_fmts_num;
 
 	g_mutex_init(&priv->v4l2events.mutex);
 	priv->v4l2events.subscribed = 0;
@@ -941,22 +936,20 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 
 	dev_ops_priv->gst_priv = priv;
 
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
+	g_mutex_init(&priv->queue_mutex);
+	g_cond_init(&priv->queue_cond);
 
+	/* To wait for the requested number of buffers on CAPTURE
+	   to be set in pad_probe_query() */
+	g_mutex_init(&priv->cap_reqbuf_mutex);
+	g_cond_init(&priv->cap_reqbuf_cond);
+
+
+	GST_DEBUG("Initialized gst backend");
 	return 0;
 
- error:
-	if (priv->cap_buffers_queue)
-		g_queue_free(priv->cap_buffers_queue);
-	if (priv->reqbufs_queue)
-		g_queue_free(priv->reqbufs_queue);
-	g_free(priv->out_fmts);
-	g_free(priv->cap_fmts);
-	if (priv->pipeline)
-		gst_object_unref(priv->pipeline);
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
+error:
+	g_free(priv->config.pool_lib_path);
 	g_free(priv);
 
 	return -1;
@@ -993,27 +986,49 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	if (priv->probe_id)
 		remove_query_pad_probe(priv->appsink, priv->probe_id);
 
-	if (priv->out_buffers)
+	if (priv->out_buffers) {
 		g_free(priv->out_buffers);
+		priv->out_buffers = NULL;
+	}
 
-	if (priv->cap_buffers)
+	if (priv->cap_buffers) {
 		g_free(priv->cap_buffers);
+		priv->cap_buffers = NULL;
+	}
 
-	gst_object_unref(priv->src_pool);
-	gst_object_unref(priv->sink_pool);
+	if (priv->src_pool)
+		gst_object_unref(priv->src_pool);
+	if (priv->sink_pool)
+		gst_object_unref(priv->sink_pool);
 
 	g_free(priv->out_fmts);
 	g_free(priv->cap_fmts);
+	priv->out_fmts = NULL;
+	priv->cap_fmts = NULL;
 
-	g_queue_free(priv->cap_buffers_queue);
-	g_queue_free(priv->reqbufs_queue);
+	if (priv->cap_buffers_queue) {
+		g_queue_free(priv->cap_buffers_queue);
+		priv->cap_buffers_queue = NULL;
+	}
+	if (priv->reqbufs_queue) {
+		g_queue_free(priv->reqbufs_queue);
+		priv->reqbufs_queue = NULL;
+	}
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
 	g_mutex_clear(&priv->cap_reqbuf_mutex);
 	g_cond_clear(&priv->cap_reqbuf_cond);
 
-	gst_object_unref(priv->pipeline);
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+
+	g_free(priv->config.h264_pipeline);
+	g_free(priv->config.hevc_pipeline);
+	g_free(priv->config.pool_lib_path);
+	priv->config.h264_pipeline = NULL;
+	priv->config.hevc_pipeline = NULL;
+	priv->config.pool_lib_path = NULL;
 
 	GST_DEBUG("gst_backend_deinit end");
 }
@@ -1077,15 +1092,6 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 
-	GST_OBJECT_LOCK(priv->pipeline);
-	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
-		GST_ERROR("The pipeline is already running");
-		errno = EBUSY;
-		GST_OBJECT_UNLOCK(priv->pipeline);
-		return -1;
-	}
-	GST_OBJECT_UNLOCK(priv->pipeline);
-
 	pix_fmt = &fmt->fmt.pix_mp;
 
 	if (!is_pix_fmt_supported(priv->out_fmts, priv->out_fmts_num,
@@ -1101,6 +1107,43 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
+	if (priv->pipeline) {
+		gchar fourcc_str[5];
+		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+		if (priv->out_fourcc != pix_fmt->pixelformat) {
+			if (priv->out_fourcc == V4L2_PIX_FMT_H264) {
+				GST_ERROR("pixelformat is different from current pipeline. pixelformat:%s pipeline: %s",
+					  fourcc_str, priv->config.h264_pipeline);
+			} else if (priv->out_fourcc == V4L2_PIX_FMT_H264) {
+				GST_ERROR("pixelformat is different from current pipeline. pixelformat:%s pipeline: %s",
+					  fourcc_str, priv->config.hevc_pipeline);
+			}
+			errno = EINVAL;
+		} else {
+			GST_WARNING("pipeline should not be created twice for same pixelformat: %s", fourcc_str);
+		}
+		return -1;
+	} else {
+		if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
+			GST_DEBUG("create H264 pipeline");
+			priv->pipeline = create_pipeline(priv->config.h264_pipeline);
+		} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
+			GST_DEBUG("create HEVC pipeline");
+			priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+		}
+
+		if (!priv->pipeline)
+			goto error;
+
+		/* Initialization regarding appsrc and appsink elements */
+		if (!init_app_elements(priv))
+			goto error;
+
+		if (!init_buffer_pool(priv)) {
+			goto error;
+		}
+	}
+
 	priv->out_fourcc = pix_fmt->pixelformat;
 	priv->out_buf_size = pix_fmt->plane_fmt[0].sizeimage;
 
@@ -1110,6 +1153,24 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		priv->cap_pix_fmt.pixelformat =	priv->cap_fmts[0].fmt;
 
 	return 0;
+
+error:
+	if (priv->cap_buffers_queue) {
+		g_queue_free(priv->cap_buffers_queue);
+		priv->cap_buffers_queue = NULL;
+	}
+	if (priv->reqbufs_queue) {
+		g_queue_free(priv->reqbufs_queue);
+		priv->reqbufs_queue = NULL;
+	}
+	g_free(priv->out_fmts);
+	g_free(priv->cap_fmts);
+	priv->out_fmts = NULL;
+	priv->cap_fmts = NULL;
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+	errno = EINVAL;
+	return -1;
 }
 
 static void
@@ -1272,12 +1333,6 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 
 	GST_DEBUG("VIDIOC_ENUM_FMT: type: %s (0x%x) index: %d",
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
-
-	if (!priv->out_fmts || !priv->cap_fmts) {
-		GST_ERROR("Supported formats lists are not prepared");
-		errno = EINVAL;
-		return -1;
-	}
 
 	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		fmts = priv->out_fmts;
@@ -3254,7 +3309,7 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		if (priv->config.enable_h264) {
+		if (priv->config.h264_pipeline) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
 		} else {
@@ -3264,7 +3319,7 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		if (priv->config.enable_hevc) {
+		if (priv->config.hevc_pipeline) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
 		} else {
