@@ -684,7 +684,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
 		push_source_change_event(priv);
 
-	        set_event(priv->dev_ops_priv->event_state, POLLOUT);
+		set_event(priv->dev_ops_priv->event_state, POLLOUT);
 		wait_for_cap_reqbuf_invocation(priv);
 
 		/* Even if a min value is set here, omxvideodec will reset it
@@ -729,8 +729,8 @@ setup_query_pad_probe(struct gst_backend_priv *priv)
 	gulong probe_id;
 
 	peer_pad = get_peer_pad(priv->appsink, "sink");
-        g_signal_connect(G_OBJECT(peer_pad), "unlinked",
-                         G_CALLBACK(appsink_pad_unlinked_cb), priv);
+	g_signal_connect(G_OBJECT(peer_pad), "unlinked",
+			 G_CALLBACK(appsink_pad_unlinked_cb), priv);
 	probe_id = gst_pad_add_probe(peer_pad,
 				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
 				     (GstPadProbeCallback) pad_probe_query,
@@ -1221,7 +1221,7 @@ get_fmt_ioctl_cap(struct gst_backend_priv *priv,
 	gint i;
 
 	if (!g_atomic_int_get(&priv->is_cap_fmt_acquirable) ||
-        	    priv->out_cnt < INPUT_BUFFERING_CNT) {
+		    priv->out_cnt < INPUT_BUFFERING_CNT) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1340,47 +1340,47 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
 		  argp->index, fourcc_str, argp->pixel_format);
 
 	switch (argp->pixel_format) {
-        case V4L2_PIX_FMT_GREY:
-        case V4L2_PIX_FMT_RGB565:
-        case V4L2_PIX_FMT_RGB24:
-        case V4L2_PIX_FMT_BGR24:
-        case V4L2_PIX_FMT_ABGR32:
-        case V4L2_PIX_FMT_XBGR32:
-        case V4L2_PIX_FMT_ARGB32:
-        case V4L2_PIX_FMT_XRGB32:
-        case V4L2_PIX_FMT_RGB32:
-        case V4L2_PIX_FMT_BGR32:
-        case V4L2_PIX_FMT_H264:
-        case V4L2_PIX_FMT_HEVC:
+	case V4L2_PIX_FMT_GREY:
+	case V4L2_PIX_FMT_RGB565:
+	case V4L2_PIX_FMT_RGB24:
+	case V4L2_PIX_FMT_BGR24:
+	case V4L2_PIX_FMT_ABGR32:
+	case V4L2_PIX_FMT_XBGR32:
+	case V4L2_PIX_FMT_ARGB32:
+	case V4L2_PIX_FMT_XRGB32:
+	case V4L2_PIX_FMT_RGB32:
+	case V4L2_PIX_FMT_BGR32:
+	case V4L2_PIX_FMT_H264:
+	case V4L2_PIX_FMT_HEVC:
 		argp->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
 		argp->stepwise.step_width = 1;
 		argp->stepwise.step_height = 1;
 		break;
-        case V4L2_PIX_FMT_NV12:
-        case V4L2_PIX_FMT_NV21:
-        case V4L2_PIX_FMT_YUV420:
-        case V4L2_PIX_FMT_YVU420:
-        case V4L2_PIX_FMT_NV12MT:
+	case V4L2_PIX_FMT_NV12:
+	case V4L2_PIX_FMT_NV21:
+	case V4L2_PIX_FMT_YUV420:
+	case V4L2_PIX_FMT_YVU420:
+	case V4L2_PIX_FMT_NV12MT:
 		argp->type = V4L2_FRMSIZE_TYPE_STEPWISE;
 		argp->stepwise.step_width = 2;
 		argp->stepwise.step_height = 2;
 		break;
-        case V4L2_PIX_FMT_NV16:
-        case V4L2_PIX_FMT_YUYV:
-        case V4L2_PIX_FMT_UYVY:
-        case V4L2_PIX_FMT_YVYU:
-        case V4L2_PIX_FMT_YUV422P:
+	case V4L2_PIX_FMT_NV16:
+	case V4L2_PIX_FMT_YUYV:
+	case V4L2_PIX_FMT_UYVY:
+	case V4L2_PIX_FMT_YVYU:
+	case V4L2_PIX_FMT_YUV422P:
 		argp->type = V4L2_FRMSIZE_TYPE_STEPWISE;
 		argp->stepwise.step_width = 2;
 		argp->stepwise.step_height = 1;
 		break;
-        case V4L2_PIX_FMT_YVU410:
-        case V4L2_PIX_FMT_YUV410:
+	case V4L2_PIX_FMT_YVU410:
+	case V4L2_PIX_FMT_YUV410:
 		argp->type = V4L2_FRMSIZE_TYPE_STEPWISE;
 		argp->stepwise.step_width = 4;
 		argp->stepwise.step_height = 4;
 		break;
-        case V4L2_PIX_FMT_YUV411P:
+	case V4L2_PIX_FMT_YUV411P:
 		argp->type = V4L2_FRMSIZE_TYPE_STEPWISE;
 		argp->stepwise.step_width = 4;
 		argp->stepwise.step_height = 1;
@@ -1631,8 +1631,8 @@ qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 		return -1;
 	}
 
-        if (priv->out_cnt < INPUT_BUFFERING_CNT)
-            priv->out_cnt++;
+	if (priv->out_cnt < INPUT_BUFFERING_CNT)
+	    priv->out_cnt++;
 
 	return 0;
 }
@@ -3470,7 +3470,7 @@ set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 		if (state_ret != GST_STATE_CHANGE_SUCCESS) {
 			GST_ERROR("Failed to stop pipeline (ret:%s)",
 				  gst_element_state_change_return_get_name(state_ret));
-                        errno = EINVAL;
+			errno = EINVAL;
 			ret = -1;
 		}
 		g_mutex_unlock(&priv->dev_lock);
@@ -3612,7 +3612,7 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	default:
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
 			      "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
-                              decoder_cmd->cmd, decoder_cmd->flags);
+			      decoder_cmd->cmd, decoder_cmd->flags);
 		break;
 	}
 
