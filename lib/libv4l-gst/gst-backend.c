@@ -385,6 +385,35 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 }
 
 static gboolean
+fill_config_video_format_out(struct gst_backend_priv *priv)
+{
+	struct fmt fmt;
+
+	g_array_set_size(priv->out_fmts, 0);
+
+	if (priv->config.h264_pipeline) {
+		fmt.fourcc = V4L2_PIX_FMT_H264;
+		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+		g_array_append_vals(priv->out_fmts, &fmt, 1);
+	}
+	if (priv->config.hevc_pipeline) {
+		fmt.fourcc = V4L2_PIX_FMT_HEVC;
+		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
+		g_array_append_vals(priv->out_fmts, &fmt, 1);
+	}
+	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
+		GST_DEBUG("out supported codecs : h264, hevc");
+	} else if (priv->config.h264_pipeline) {
+		GST_DEBUG("out supported codecs : h264");
+	} else if (priv->config.hevc_pipeline) {
+		GST_DEBUG("out supported codecs : hevc");
+	} else {
+		GST_DEBUG("out supported codecs : nothing");
+	}
+	return index > 0;
+}
+
+static gboolean
 get_supported_video_format_out(struct gst_backend_priv *priv)
 {
 	GstCaps *caps;
@@ -421,35 +450,6 @@ get_supported_video_format_out(struct gst_backend_priv *priv)
 	gst_caps_unref(caps);
 
 	return TRUE;
-}
-
-static gboolean
-fill_supported_config_video_format_out(struct gst_backend_priv *priv)
-{
-	struct fmt fmt;
-
-	g_array_set_size(priv->out_fmts, 0);
-
-	if (priv->config.h264_pipeline) {
-		fmt.fourcc = V4L2_PIX_FMT_H264;
-		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->out_fmts, &fmt, 1);
-	}
-	if (priv->config.hevc_pipeline) {
-		fmt.fourcc = V4L2_PIX_FMT_HEVC;
-		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->out_fmts, &fmt, 1);
-	}
-	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
-		GST_DEBUG("out supported codecs : h264, hevc");
-	} else if (priv->config.h264_pipeline) {
-		GST_DEBUG("out supported codecs : h264");
-	} else if (priv->config.hevc_pipeline) {
-		GST_DEBUG("out supported codecs : hevc");
-	} else {
-		GST_DEBUG("out supported codecs : nothing");
-	}
-	return index > 0;
 }
 
 static gboolean
@@ -885,7 +885,7 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->out_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 	priv->cap_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 
-	if (!fill_supported_config_video_format_out(priv)) {
+	if (!fill_config_video_format_out(priv)) {
 		GST_ERROR("Failed to fill in supported video format");
 		goto error;
 	}
