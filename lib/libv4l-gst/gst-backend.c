@@ -947,7 +947,6 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 		g_queue_clear_full(priv->v4l2events.queue,
 				   (GDestroyNotify)g_free);
 		g_queue_free(priv->v4l2events.queue);
-		priv->v4l2events.queue = NULL;
 	}
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
@@ -955,15 +954,11 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	if (priv->probe_id)
 		remove_query_pad_probe(priv->appsink, priv->probe_id);
 
-	if (priv->out_buffers) {
+	if (priv->out_buffers)
 		g_free(priv->out_buffers);
-		priv->out_buffers = NULL;
-	}
 
-	if (priv->cap_buffers) {
+	if (priv->cap_buffers)
 		g_free(priv->cap_buffers);
-		priv->cap_buffers = NULL;
-	}
 
 	if (priv->src_pool)
 		gst_object_unref(priv->src_pool);
@@ -974,17 +969,11 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 		g_array_free(priv->out_fmts, TRUE);
 	if (priv->cap_fmts)
 		g_array_free(priv->cap_fmts, TRUE);
-	priv->out_fmts = NULL;
-	priv->cap_fmts = NULL;
 
-	if (priv->cap_buffers_queue) {
+	if (priv->cap_buffers_queue)
 		g_queue_free(priv->cap_buffers_queue);
-		priv->cap_buffers_queue = NULL;
-	}
-	if (priv->reqbufs_queue) {
+	if (priv->reqbufs_queue)
 		g_queue_free(priv->reqbufs_queue);
-		priv->reqbufs_queue = NULL;
-	}
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
@@ -997,9 +986,9 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	g_free(priv->config.h264_pipeline);
 	g_free(priv->config.hevc_pipeline);
 	g_free(priv->config.pool_lib_path);
-	priv->config.h264_pipeline = NULL;
-	priv->config.hevc_pipeline = NULL;
-	priv->config.pool_lib_path = NULL;
+
+	g_free(priv);
+	dev_ops_priv->gst_priv = NULL;
 
 	GST_DEBUG("gst_backend_deinit end");
 }
