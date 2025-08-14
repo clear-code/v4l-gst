@@ -711,7 +711,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 	return GST_PAD_PROBE_OK;
 }
 
-void
+static void
 appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 {
 	struct gst_backend_priv *priv = data;
@@ -754,7 +754,7 @@ pull_buffer_from_sample(GstAppSink *appsink)
 	return buffer;
 }
 
-void
+static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
 	struct gst_backend_priv *priv = user_data;
