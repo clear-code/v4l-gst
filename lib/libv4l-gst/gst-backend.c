@@ -120,7 +120,6 @@ struct gst_backend_priv {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
-		gboolean is_parsed;
 		gchar *h264_pipeline;
 		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
@@ -225,11 +224,8 @@ parse_config_file(struct gst_backend_priv *priv)
 free_key_file:
 	g_key_file_free(conf_key);
 
-	if (n_pipelines == 0) {
+	if (n_pipelines == 0)
 		GST_ERROR("no pipeline!");
-	} else {
-		priv->config.is_parsed = TRUE;
-	}
 
 	return n_pipelines > 0;
 }
