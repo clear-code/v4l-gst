@@ -412,7 +412,7 @@ fill_config_video_format_out(struct gst_backend_priv *priv)
 	} else {
 		GST_DEBUG("out supported codecs : nothing");
 	}
-	return index > 0;
+	return priv->out_fmts->len > 0;
 }
 
 static gboolean
