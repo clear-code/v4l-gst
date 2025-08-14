@@ -103,6 +103,8 @@ struct gst_backend_priv {
 
 	gulong probe_id;
 
+	/* To wait for the requested number of buffers on CAPTURE
+	   to be set in pad_probe_query() */
 	GMutex cap_reqbuf_mutex;
 	GCond cap_reqbuf_cond;
 
@@ -895,17 +897,14 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->v4l2events.sequence = 0;
 	priv->v4l2events.queue = g_queue_new();
 
+	g_mutex_init(&priv->queue_mutex);
+	g_cond_init(&priv->queue_cond);
+	g_mutex_init(&priv->cap_reqbuf_mutex);
+	g_cond_init(&priv->cap_reqbuf_cond);
+
 	g_mutex_init(&priv->dev_lock);
 
 	dev_ops_priv->gst_priv = priv;
-
-	g_mutex_init(&priv->queue_mutex);
-	g_cond_init(&priv->queue_cond);
-
-	/* To wait for the requested number of buffers on CAPTURE
-	   to be set in pad_probe_query() */
-	g_mutex_init(&priv->cap_reqbuf_mutex);
-	g_cond_init(&priv->cap_reqbuf_cond);
 
 
 	GST_DEBUG("Initialized gst backend");
