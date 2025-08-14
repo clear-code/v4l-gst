@@ -1391,7 +1391,7 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
 	argp->stepwise.max_width = priv->config.max_width ?
 		priv->config.max_width : 1920;
 	argp->stepwise.max_height = priv->config.max_height ?
-		priv->config.max_height : 1088;
+		priv->config.max_height : 1080;
 
 	return 0;
 }
