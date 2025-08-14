@@ -920,6 +920,8 @@ error:
 		g_array_free(priv->out_fmts, TRUE);
 	if (priv->cap_fmts)
 		g_array_free(priv->cap_fmts, TRUE);
+	g_free(priv->config.h264_pipeline);
+	g_free(priv->config.hevc_pipeline);
 	g_free(priv->config.pool_lib_path);
 	g_free(priv);
 
