@@ -59,9 +59,9 @@ struct v4l_gst_buffer {
 	enum buffer_state state;
 };
 
-struct fmts {
-        guint fmt;
-        gchar fmt_char[FMTDESC_NAME_LENGTH];
+struct fmt {
+	guint fourcc;
+	gchar desc[FMTDESC_NAME_LENGTH];
 };
 
 struct gst_backend_priv {
@@ -76,10 +76,8 @@ struct gst_backend_priv {
 	void *pool_lib_handle;
 	struct libv4l_gst_buffer_pool_ops *pool_ops;
 
-	struct fmts *out_fmts;
-	gint out_fmts_num;
-	struct fmts *cap_fmts;
-	gint cap_fmts_num;
+	GArray *out_fmts; /* struct fmt */
+	GArray *cap_fmts; /* struct fmt */
 
 	guint out_fourcc;
 	gsize out_buf_size;
@@ -105,6 +103,8 @@ struct gst_backend_priv {
 
 	gulong probe_id;
 
+	/* To wait for the requested number of buffers on CAPTURE
+	   to be set in pad_probe_query() */
 	GMutex cap_reqbuf_mutex;
 	GCond cap_reqbuf_cond;
 
@@ -122,9 +122,9 @@ struct gst_backend_priv {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
-		/* TODO: non exclusive pipeline support */
-		gboolean enable_h264;
-		gboolean enable_hevc;
+		gchar *h264_pipeline;
+		gchar *hevc_pipeline;
+		gchar *pool_lib_path;
 	} config;
 
 	struct {
@@ -138,8 +138,7 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_config_file(struct gst_backend_priv *priv,
-		  gchar **pipeline_str, gchar **pool_lib_path)
+parse_config_file(struct gst_backend_priv *priv)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -149,6 +148,7 @@ parse_config_file(struct gst_backend_priv *priv,
 	gchar **groups;
 	gsize n_groups;
 	gint i;
+	guint n_pipelines = 0;
 
 	sys_conf_dirs = g_get_system_config_dirs();
 
@@ -169,13 +169,12 @@ parse_config_file(struct gst_backend_priv *priv,
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
-		*pool_lib_path
+		priv->config.pool_lib_path
 			= g_key_file_get_string(conf_key, libv4l_gst_group,
 						"bufferpool-library",
 						NULL);
-
 		GST_DEBUG("external buffer pool library : %s",
-			  *pool_lib_path ? *pool_lib_path : "none");
+			  priv->config.pool_lib_path ? priv->config.pool_lib_path : "none");
 
 		priv->config.cap_min_buffers
 			= g_key_file_get_integer(conf_key, libv4l_gst_group,
@@ -199,41 +198,27 @@ parse_config_file(struct gst_backend_priv *priv,
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		gboolean enabled;
-
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
-		enabled = g_key_file_get_boolean(conf_key, groups[i],
-						 "enabled", &err);
+		gchar *pipeline_str
+			= g_key_file_get_string(conf_key, groups[i],
+						"pipeline", &err);
 		if (err) {
-			GST_INFO("GStreamer enabled is not specified, assume enabled=true");
-			g_error_free(err);
-			err = NULL;
-			enabled = TRUE;
-		}
-		if (!enabled) {
-			GST_INFO("%s pipeline in %s was disabled", groups[i], conf_name);
-			continue;
-		}
-
-		*pipeline_str = g_key_file_get_string(conf_key, groups[i],
-						      "pipeline", &err);
-		if (!*pipeline_str) {
 			GST_ERROR("GStreamer pipeline is not specified");
 			if (err) g_error_free(err);
 			err = NULL;
 			continue;
 		}
-		GST_DEBUG("parsed pipeline : %s", *pipeline_str);
 		if (!g_strcmp0(groups[i], "H264")) {
-			priv->config.enable_h264 = TRUE;
-			GST_DEBUG("parsed H264 pipeline : %s", *pipeline_str);
-		}
-		if (!g_strcmp0(groups[i], "HEVC")) {
-			priv->config.enable_hevc = TRUE;
-			GST_DEBUG("parsed HEVC pipeline : %s", *pipeline_str);
+			priv->config.h264_pipeline = pipeline_str;
+			n_pipelines++;
+			GST_DEBUG("enabled H264 pipeline: %s", pipeline_str);
+		} else if (!g_strcmp0(groups[i], "HEVC")) {
+			priv->config.hevc_pipeline = pipeline_str;
+			n_pipelines++;
+			GST_DEBUG("enabled HEVC pipeline: %s", pipeline_str);
 		}
 	}
 
@@ -241,10 +226,10 @@ parse_config_file(struct gst_backend_priv *priv,
 free_key_file:
 	g_key_file_free(conf_key);
 
-	if (!*pipeline_str)
+	if (n_pipelines == 0)
 		GST_ERROR("no pipeline!");
 
-	return !!*pipeline_str;
+	return n_pipelines > 0;
 }
 
 static GstElement *
@@ -402,73 +387,75 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 }
 
 static gboolean
-get_supported_video_format_out(GstElement *appsrc, struct fmts **out_fmts,
-			       gint *out_fmts_num, gboolean enable_hevc)
+fill_config_video_format_out(struct gst_backend_priv *priv)
+{
+	struct fmt fmt;
+
+	g_array_set_size(priv->out_fmts, 0);
+
+	if (priv->config.h264_pipeline) {
+		fmt.fourcc = V4L2_PIX_FMT_H264;
+		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+		g_array_append_vals(priv->out_fmts, &fmt, 1);
+	}
+	if (priv->config.hevc_pipeline) {
+		fmt.fourcc = V4L2_PIX_FMT_HEVC;
+		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
+		g_array_append_vals(priv->out_fmts, &fmt, 1);
+	}
+	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
+		GST_DEBUG("out supported codecs : h264, hevc");
+	} else if (priv->config.h264_pipeline) {
+		GST_DEBUG("out supported codecs : h264");
+	} else if (priv->config.hevc_pipeline) {
+		GST_DEBUG("out supported codecs : hevc");
+	} else {
+		GST_DEBUG("out supported codecs : nothing");
+	}
+	return index > 0;
+}
+
+static gboolean
+get_supported_video_format_out(struct gst_backend_priv *priv)
 {
 	GstCaps *caps;
 	GstStructure *structure;
 	const gchar *mime;
 	guint fourcc;
+	struct fmt *fmt;
 
-	caps = get_peer_pad_template_caps(appsrc, "src");
+	caps = get_peer_pad_template_caps(priv->appsrc, "src");
 
-	if (gst_caps_is_any(caps)) {
-		/* H.264 and VP8 codecs are supported in this plugin.
-		   We treat all the codecs when GST_CAPS_ANY is set as
-		   a template caps. */
-		*out_fmts_num = 2;
-		*out_fmts = g_new0(struct fmts, *out_fmts_num);
+	structure = gst_caps_get_structure(caps, 0);
+	mime = gst_structure_get_name(structure);
 
-		(*out_fmts)[0].fmt = V4L2_PIX_FMT_H264;
-		(*out_fmts)[1].fmt = V4L2_PIX_FMT_VP8;
-		g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		g_strlcpy((*out_fmts)[1].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
-
-		GST_DEBUG("out supported codecs : h264, vp8");
+	if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
+		fourcc = V4L2_PIX_FMT_H264;
+	} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
+		fourcc = V4L2_PIX_FMT_HEVC;
 	} else {
-		structure = gst_caps_get_structure(caps, 0);
-		mime = gst_structure_get_name(structure);
-
-		if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
-			fourcc = V4L2_PIX_FMT_H264;
-		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_VP8) == 0) {
-			fourcc = V4L2_PIX_FMT_VP8;
-		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
-			if (enable_hevc) {
-				fourcc = V4L2_PIX_FMT_HEVC;
-			} else {
-				GST_ERROR("Disabled HEVC pipeline for codec : %s", mime);
-				gst_caps_unref(caps);
-				return FALSE;
-			}
-		} else {
-			GST_ERROR("Unsupported codec : %s", mime);
-			gst_caps_unref(caps);
-			return FALSE;
-		}
-
-		GST_DEBUG("out supported codec : %s", mime);
-
-		*out_fmts_num = 1;
-		*out_fmts = g_new0(struct fmts, *out_fmts_num);
-
-		(*out_fmts)[0].fmt = fourcc;
-		if(fourcc == V4L2_PIX_FMT_H264)
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		else if (fourcc == V4L2_PIX_FMT_HEVC)
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-		else
-			g_strlcpy((*out_fmts)[0].fmt_char, "V4L2_PIX_FMT_VP8", FMTDESC_NAME_LENGTH);
+		GST_ERROR("Unsupported codec : %s", mime);
+		gst_caps_unref(caps);
+		g_array_set_size(priv->out_fmts, 0);
+		return FALSE;
 	}
+	GST_DEBUG("out supported codec : %s", mime);
 
+	g_array_set_size(priv->out_fmts, 1);
+	fmt = (struct fmt*)priv->out_fmts->data;
+
+	fmt->fourcc = fourcc;
+	if(fourcc == V4L2_PIX_FMT_H264)
+		g_strlcpy(fmt->desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+	else if (fourcc == V4L2_PIX_FMT_HEVC)
+		g_strlcpy(fmt->desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
 	gst_caps_unref(caps);
 
 	return TRUE;
 }
 
 static gboolean
-get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
-			       gint *cap_fmts_num)
+get_supported_video_format_cap(struct gst_backend_priv *priv)
 {
 	GstCaps *caps;
 	GstStructure *structure;
@@ -476,27 +463,26 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 	const GValue *val, *list_val;
 	const gchar *fmt_str;
 	GstVideoFormat fmt;
-	guint fourcc;
 	gint list_size;
-	gint fmts_num;
 	guint i, j;
-	struct fmts *color_fmts = NULL;
+	struct fmt color_fmt;
 
-	caps = get_peer_pad_template_caps(appsink, "sink");
+	g_array_set_size(priv->cap_fmts, 0);
+
+	caps = get_peer_pad_template_caps(priv->appsink, "sink");
 
 	/* We treat GST_CAPS_ANY as all video formats support. */
 	if (gst_caps_is_any(caps)) {
 		gst_caps_unref(caps);
 		caps = gst_caps_from_string
-				("video/x-raw, format=" GST_VIDEO_FORMATS_ALL);
+			("video/x-raw, format=" GST_VIDEO_FORMATS_ALL);
 	}
 
 	structs = gst_caps_get_size(caps);
 	list_size = 2; // Add space for legacy RGB formats if available */
-	fmts_num = 0;
 
 	for (j = 0; j < structs; j++) {
-	        gint num_cap_formats;
+		gint num_cap_formats;
 		structure = gst_caps_get_structure(caps, j);
 		val = gst_structure_get_value(structure, "format");
 		if (!val)
@@ -504,7 +490,6 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 
 		num_cap_formats = gst_value_list_get_size(val);
 		list_size += num_cap_formats;
-		color_fmts = g_renew(struct fmts, color_fmts, list_size);
 
 		for (i = 0; i < num_cap_formats; i++) {
 			list_val = gst_value_list_get_value(val, i);
@@ -516,8 +501,8 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 				continue;
 			}
 
-			fourcc = fourcc_from_gst_video_format(fmt);
-			if (fourcc == 0) {
+			color_fmt.fourcc = fourcc_from_gst_video_format(fmt);
+			if (color_fmt.fourcc == 0) {
 				GST_DEBUG("Failed to convert video format "
 					  "from gst to v4l2 : %s", fmt_str);
 				continue;
@@ -525,35 +510,32 @@ get_supported_video_format_cap(GstElement *appsink, struct fmts **cap_fmts,
 
 			GST_DEBUG("cap supported video format : %s", fmt_str);
 
-			color_fmts[fmts_num].fmt = fourcc;
-			g_strlcpy(color_fmts[fmts_num++].fmt_char, fmt_str,
-				FMTDESC_NAME_LENGTH);
+			g_strlcpy(color_fmt.desc, fmt_str, FMTDESC_NAME_LENGTH);
 
 			/* Add legacy RGB formats */
-			if (fourcc == V4L2_PIX_FMT_ARGB32) {
-				color_fmts[fmts_num].fmt = V4L2_PIX_FMT_RGB32;
-				g_strlcpy(color_fmts[fmts_num++].fmt_char,
-					fmt_str, FMTDESC_NAME_LENGTH);
-			} else if (fourcc == V4L2_PIX_FMT_ABGR32) {
-				color_fmts[fmts_num].fmt = V4L2_PIX_FMT_BGR32;
-				g_strlcpy(color_fmts[fmts_num++].fmt_char,
-					fmt_str, FMTDESC_NAME_LENGTH);
+			if (color_fmt.fourcc == V4L2_PIX_FMT_ARGB32) {
+				color_fmt.fourcc = V4L2_PIX_FMT_RGB32;
+				g_strlcpy(color_fmt.desc,
+					  fmt_str, FMTDESC_NAME_LENGTH);
+			} else if (color_fmt.fourcc == V4L2_PIX_FMT_ABGR32) {
+				color_fmt.fourcc = V4L2_PIX_FMT_BGR32;
+				g_strlcpy(color_fmt.desc,
+					  fmt_str, FMTDESC_NAME_LENGTH);
 			}
+
+			g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
 		}
 	}
 
 	gst_caps_unref(caps);
 
-	if (fmts_num == 0) {
+	if (priv->cap_fmts->len == 0) {
 		GST_ERROR("Failed to get video formats from caps");
 		return FALSE;
 	}
 
-	*cap_fmts_num = fmts_num;
-	*cap_fmts = color_fmts;
-
 	GST_DEBUG("The total number of cap supported video format : %d",
-		  *cap_fmts_num);
+		  priv->cap_fmts->len);
 
 
 	return TRUE;
@@ -818,35 +800,19 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 static gboolean
 init_app_elements(struct gst_backend_priv *priv)
 {
-	struct fmts *out_fmts;
-	gint out_fmts_num;
-	struct fmts *cap_fmts;
-	gint cap_fmts_num;
-
 	/* Get appsrc and appsink elements respectively from the pipeline */
 	if (!get_app_elements(priv->pipeline, &priv->appsrc, &priv->appsink))
 		return FALSE;
 
-	if (!get_supported_video_format_out(priv->appsrc, &out_fmts,
-					    &out_fmts_num,
-					    priv->config.enable_hevc))
+	if (!get_supported_video_format_out(priv))
 		return FALSE;
 
-	if (!get_supported_video_format_cap(priv->appsink, &cap_fmts,
-					    &cap_fmts_num)) {
-		g_free(out_fmts);
+	if (!get_supported_video_format_cap(priv))
 		return FALSE;
-	}
-	priv->out_fmts = out_fmts;
-	priv->out_fmts_num = out_fmts_num;
-	priv->cap_fmts = cap_fmts;
-	priv->cap_fmts_num = cap_fmts_num;
 
 	/* For queuing buffers received from appsink */
 	priv->cap_buffers_queue = g_queue_new();
 	priv->reqbufs_queue = g_queue_new();
-	g_mutex_init(&priv->queue_mutex);
-	g_cond_init(&priv->queue_cond);
 
 	/* Set the appsrc queue size to unlimited.
 	   The amount of buffers is managed by the buffer pool. */
@@ -862,12 +828,12 @@ init_app_elements(struct gst_backend_priv *priv)
 }
 
 static gboolean
-init_buffer_pool(struct gst_backend_priv *priv, gchar *pool_lib_path)
+init_buffer_pool(struct gst_backend_priv *priv)
 {
 	/* Get the external buffer pool when it is specified in
 	   the configuration file */
-	if (pool_lib_path) {
-		get_buffer_pool_ops(pool_lib_path,
+	if (priv->config.pool_lib_path) {
+		get_buffer_pool_ops(priv->config.pool_lib_path,
 				    &priv->pool_lib_handle, &priv->pool_ops);
 	}
 
@@ -880,17 +846,14 @@ init_buffer_pool(struct gst_backend_priv *priv, gchar *pool_lib_path)
 		goto free_pool;
 	}
 
-	/* To wait for the requested number of buffers on CAPTURE
-	   to be set in pad_probe_query() */
-	g_mutex_init(&priv->cap_reqbuf_mutex);
-	g_cond_init(&priv->cap_reqbuf_cond);
-
 	return TRUE;
 
 	/* error cases */
 free_pool:
-	gst_object_unref(priv->src_pool);
-	gst_object_unref(priv->sink_pool);
+	if (priv->src_pool)
+		gst_object_unref(priv->src_pool);
+	if (priv->sink_pool)
+		gst_object_unref(priv->sink_pool);
 
 	return FALSE;
 }
@@ -899,8 +862,6 @@ int
 gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 {
 	struct gst_backend_priv *priv;
-	gchar *pipeline_str = NULL;
-	gchar *pool_lib_path = NULL;
 
 	priv = calloc(1, sizeof(*priv));
 	if (!priv) {
@@ -911,28 +872,23 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->dev_ops_priv = dev_ops_priv;
 
 	gst_init(NULL, NULL);
-        GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
+	GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
 				"v4l-gst", 0,
 				"debug category for v4l-gst application");
-        GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
+	GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
 				"v4l-gst-ioctl", 0,
 				"debug category for v4l-gst IOCTL operation");
 
-	if (!parse_config_file(priv, &pipeline_str, &pool_lib_path))
+	if (!parse_config_file(priv)) {
+		GST_ERROR("pipeline configuration is not found at all");
 		goto error;
+	}
 
-	priv->pipeline = create_pipeline(pipeline_str);
+	priv->out_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
+	priv->cap_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 
-	if (!priv->pipeline)
-		goto error;
-
-	/* Initialization regarding appsrc and appsink elements */
-	if (!init_app_elements(priv))
-		goto error;
-
-	if (!init_buffer_pool(priv, pool_lib_path)) {
-		g_mutex_clear(&priv->queue_mutex);
-		g_cond_clear(&priv->queue_cond);
+	if (!fill_config_video_format_out(priv)) {
+		GST_ERROR("Failed to fill in supported video format");
 		goto error;
 	}
 
@@ -941,26 +897,27 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 	priv->v4l2events.sequence = 0;
 	priv->v4l2events.queue = g_queue_new();
 
+	g_mutex_init(&priv->queue_mutex);
+	g_cond_init(&priv->queue_cond);
+	g_mutex_init(&priv->cap_reqbuf_mutex);
+	g_cond_init(&priv->cap_reqbuf_cond);
+
 	g_mutex_init(&priv->dev_lock);
 
 	dev_ops_priv->gst_priv = priv;
 
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
 
+	GST_DEBUG("Initialized gst backend");
 	return 0;
 
- error:
-	if (priv->cap_buffers_queue)
-		g_queue_free(priv->cap_buffers_queue);
-	if (priv->reqbufs_queue)
-		g_queue_free(priv->reqbufs_queue);
-	g_free(priv->out_fmts);
-	g_free(priv->cap_fmts);
-	if (priv->pipeline)
-		gst_object_unref(priv->pipeline);
-	g_free(pipeline_str);
-	g_free(pool_lib_path);
+error:
+	if (priv->out_fmts)
+		g_array_free(priv->out_fmts, TRUE);
+	if (priv->cap_fmts)
+		g_array_free(priv->cap_fmts, TRUE);
+	g_free(priv->config.h264_pipeline);
+	g_free(priv->config.hevc_pipeline);
+	g_free(priv->config.pool_lib_path);
 	g_free(priv);
 
 	return -1;
@@ -989,7 +946,6 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 		g_queue_clear_full(priv->v4l2events.queue,
 				   (GDestroyNotify)g_free);
 		g_queue_free(priv->v4l2events.queue);
-		priv->v4l2events.queue = NULL;
 	}
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
@@ -1003,21 +959,35 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	if (priv->cap_buffers)
 		g_free(priv->cap_buffers);
 
-	gst_object_unref(priv->src_pool);
-	gst_object_unref(priv->sink_pool);
+	if (priv->src_pool)
+		gst_object_unref(priv->src_pool);
+	if (priv->sink_pool)
+		gst_object_unref(priv->sink_pool);
 
-	g_free(priv->out_fmts);
-	g_free(priv->cap_fmts);
+	if (priv->out_fmts)
+		g_array_free(priv->out_fmts, TRUE);
+	if (priv->cap_fmts)
+		g_array_free(priv->cap_fmts, TRUE);
 
-	g_queue_free(priv->cap_buffers_queue);
-	g_queue_free(priv->reqbufs_queue);
+	if (priv->cap_buffers_queue)
+		g_queue_free(priv->cap_buffers_queue);
+	if (priv->reqbufs_queue)
+		g_queue_free(priv->reqbufs_queue);
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
 	g_mutex_clear(&priv->cap_reqbuf_mutex);
 	g_cond_clear(&priv->cap_reqbuf_cond);
 
-	gst_object_unref(priv->pipeline);
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+
+	g_free(priv->config.h264_pipeline);
+	g_free(priv->config.hevc_pipeline);
+	g_free(priv->config.pool_lib_path);
+
+	g_free(priv);
+	dev_ops_priv->gst_priv = NULL;
 
 	GST_DEBUG("gst_backend_deinit end");
 }
@@ -1046,13 +1016,13 @@ querycap_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_capability *cap)
 }
 
 static gboolean
-is_pix_fmt_supported(struct fmts *fmts, gint fmts_num, guint fourcc)
+is_pix_fmt_supported(struct fmt *fmts, gint fmts_num, guint fourcc)
 {
 	gint i;
 	gboolean ret = FALSE;
 
 	for (i = 0; i < fmts_num; i++) {
-		if (fmts[i].fmt == fourcc) {
+		if (fmts[i].fourcc == fourcc) {
 			ret = TRUE;
 			break;
 		}
@@ -1080,21 +1050,16 @@ static int
 set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
-
-	GST_OBJECT_LOCK(priv->pipeline);
-	if (GST_STATE(priv->pipeline) != GST_STATE_NULL) {
-		GST_ERROR("The pipeline is already running");
-		errno = EBUSY;
-		GST_OBJECT_UNLOCK(priv->pipeline);
-		return -1;
-	}
-	GST_OBJECT_UNLOCK(priv->pipeline);
+	gchar fourcc_str[5];
 
 	pix_fmt = &fmt->fmt.pix_mp;
+	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 
-	if (!is_pix_fmt_supported(priv->out_fmts, priv->out_fmts_num,
+	if (!is_pix_fmt_supported((struct fmt*)priv->out_fmts->data,
+				  priv->out_fmts->len,
 				  pix_fmt->pixelformat)) {
-		GST_ERROR("Unsupported pixelformat on OUTPUT");
+		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
+			  fourcc_str, pix_fmt->pixelformat);
 		errno = EINVAL;
 		return -1;
 	}
@@ -1105,15 +1070,69 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
+	if (priv->pipeline) {
+		if (priv->out_fourcc == pix_fmt->pixelformat) {
+			GST_WARNING("Same pixelformat with current: %s",
+				    fourcc_str);
+			return 0;
+		} else {
+			gchar current[5];
+
+			fourcc_to_string(priv->out_fourcc, current);
+			GST_ERROR("Different pixelformat with current: "
+				  "pixelformat:%s, current: %s",
+				  fourcc_str, current);
+			errno = EINVAL;
+			return -1;
+		}
+	}
+
+	if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
+		GST_DEBUG("create H264 pipeline");
+		priv->pipeline = create_pipeline(priv->config.h264_pipeline);
+	} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
+		GST_DEBUG("create HEVC pipeline");
+		priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+	}
+
+	if (!priv->pipeline) {
+		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
+		goto error;
+	}
+
+	/* Initialization regarding appsrc and appsink elements */
+	if (!init_app_elements(priv))
+		goto error;
+
+	if (!init_buffer_pool(priv))
+		goto error;
+
 	priv->out_fourcc = pix_fmt->pixelformat;
 	priv->out_buf_size = pix_fmt->plane_fmt[0].sizeimage;
 
 	set_params_as_encoded_stream(pix_fmt);
 
-	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts_num > 0)
-		priv->cap_pix_fmt.pixelformat =	priv->cap_fmts[0].fmt;
+	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts->len > 0)
+		priv->cap_pix_fmt.pixelformat
+			= ((struct fmt*)priv->cap_fmts->data)[0].fourcc;
 
 	return 0;
+
+error:
+	if (priv->cap_buffers_queue) {
+		g_queue_free(priv->cap_buffers_queue);
+		priv->cap_buffers_queue = NULL;
+	}
+	if (priv->reqbufs_queue) {
+		g_queue_free(priv->reqbufs_queue);
+		priv->reqbufs_queue = NULL;
+	}
+	if (priv->pipeline) {
+		gst_object_unref(priv->pipeline);
+		priv->pipeline = NULL;
+	}
+	errno = EINVAL;
+	return -1;
 }
 
 static void
@@ -1134,7 +1153,8 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
-	if (!is_pix_fmt_supported(priv->cap_fmts, priv->cap_fmts_num,
+	if (!is_pix_fmt_supported((struct fmt*)priv->cap_fmts->data,
+				  priv->cap_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on CAPTURE");
 		errno = EINVAL;
@@ -1270,26 +1290,20 @@ int
 enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 {
 	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
-	struct fmts *fmts;
+	struct fmt *fmts;
 	gint fmts_num;
 	gchar fourcc_str[5];
 
 	GST_DEBUG("VIDIOC_ENUM_FMT: type: %s (0x%x) index: %d",
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
-	if (!priv->out_fmts || !priv->cap_fmts) {
-		GST_ERROR("Supported formats lists are not prepared");
-		errno = EINVAL;
-		return -1;
-	}
-
 	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		fmts = priv->out_fmts;
-		fmts_num = priv->out_fmts_num;
+		fmts = (struct fmt*)priv->out_fmts->data;
+		fmts_num = priv->out_fmts->len;
 		desc->flags = V4L2_FMT_FLAG_COMPRESSED;
 	} else if (desc->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		fmts = priv->cap_fmts;
-		fmts_num = priv->cap_fmts_num;
+		fmts = (struct fmt*)priv->cap_fmts->data;
+		fmts_num = priv->cap_fmts->len;
 		desc->flags = 0;
 	} else {
 		GST_ERROR("Invalid buf type");
@@ -1303,8 +1317,8 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 		return -1;
 	}
 
-	desc->pixelformat = fmts[desc->index].fmt;
-	g_strlcpy((gchar *)desc->description, fmts[desc->index].fmt_char,
+	desc->pixelformat = fmts[desc->index].fourcc;
+	g_strlcpy((gchar *)desc->description, fmts[desc->index].desc,
 		   sizeof(desc->description));
 	memset(desc->reserved, 0, sizeof(desc->reserved));
 	fourcc_to_string(desc->pixelformat, fourcc_str);
@@ -3258,7 +3272,7 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		if (priv->config.enable_h264) {
+		if (priv->config.h264_pipeline) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
 		} else {
@@ -3268,7 +3282,7 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		if (priv->config.enable_hevc) {
+		if (priv->config.hevc_pipeline) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
 		} else {
