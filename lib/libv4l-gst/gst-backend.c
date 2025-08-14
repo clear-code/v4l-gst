@@ -1066,13 +1066,16 @@ static int
 set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
+	gchar fourcc_str[5];
 
 	pix_fmt = &fmt->fmt.pix_mp;
+	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 
 	if (!is_pix_fmt_supported((struct fmt*)priv->out_fmts->data,
 				  priv->out_fmts->len,
 				  pix_fmt->pixelformat)) {
-		GST_ERROR("Unsupported pixelformat on OUTPUT");
+		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
+			  fourcc_str, pix_fmt->pixelformat);
 		errno = EINVAL;
 		return -1;
 	}
@@ -1084,41 +1087,41 @@ set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 	}
 
 	if (priv->pipeline) {
-		gchar fourcc_str[5];
-		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
-		if (priv->out_fourcc != pix_fmt->pixelformat) {
-			if (priv->out_fourcc == V4L2_PIX_FMT_H264) {
-				GST_ERROR("pixelformat is different from current pipeline. pixelformat:%s pipeline: %s",
-					  fourcc_str, priv->config.h264_pipeline);
-			} else if (priv->out_fourcc == V4L2_PIX_FMT_H264) {
-				GST_ERROR("pixelformat is different from current pipeline. pixelformat:%s pipeline: %s",
-					  fourcc_str, priv->config.hevc_pipeline);
-			}
-			errno = EINVAL;
+		if (priv->out_fourcc == pix_fmt->pixelformat) {
+			GST_WARNING("Same pixelformat with current: %s",
+				    fourcc_str);
+			return 0;
 		} else {
-			GST_WARNING("pipeline should not be created twice for same pixelformat: %s", fourcc_str);
-		}
-		return -1;
-	} else {
-		if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
-			GST_DEBUG("create H264 pipeline");
-			priv->pipeline = create_pipeline(priv->config.h264_pipeline);
-		} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
-			GST_DEBUG("create HEVC pipeline");
-			priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
-		}
+			gchar current[5];
 
-		if (!priv->pipeline)
-			goto error;
-
-		/* Initialization regarding appsrc and appsink elements */
-		if (!init_app_elements(priv))
-			goto error;
-
-		if (!init_buffer_pool(priv)) {
-			goto error;
+			fourcc_to_string(priv->out_fourcc, current);
+			GST_ERROR("Different pixelformat with current: "
+				  "pixelformat:%s, current: %s",
+				  fourcc_str, current);
+			errno = EINVAL;
+			return -1;
 		}
 	}
+
+	if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
+		GST_DEBUG("create H264 pipeline");
+		priv->pipeline = create_pipeline(priv->config.h264_pipeline);
+	} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
+		GST_DEBUG("create HEVC pipeline");
+		priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+	}
+
+	if (!priv->pipeline) {
+		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
+		goto error;
+	}
+
+	/* Initialization regarding appsrc and appsink elements */
+	if (!init_app_elements(priv))
+		goto error;
+
+	if (!init_buffer_pool(priv))
+		goto error;
 
 	priv->out_fourcc = pix_fmt->pixelformat;
 	priv->out_buf_size = pix_fmt->plane_fmt[0].sizeimage;
@@ -1140,8 +1143,10 @@ error:
 		g_queue_free(priv->reqbufs_queue);
 		priv->reqbufs_queue = NULL;
 	}
-	if (priv->pipeline)
+	if (priv->pipeline) {
 		gst_object_unref(priv->pipeline);
+		priv->pipeline = NULL;
+	}
 	errno = EINVAL;
 	return -1;
 }
