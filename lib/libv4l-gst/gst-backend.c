@@ -64,12 +64,20 @@ struct fmt {
 	gchar desc[FMTDESC_NAME_LENGTH];
 };
 
+typedef enum {
+	EOS_NONE,
+	EOS_BEGIN,
+	EOS_WAITING_DECODE,
+	EOS_DECODER_GOT_EOS
+} EOSState;
+
 struct gst_backend_priv {
 	struct v4l_gst_priv *dev_ops_priv;
 
 	GstElement *pipeline;
 	GstElement *appsrc;
 	GstElement *appsink;
+	GstElement *decoder;
 
 	GstAppSinkCallbacks appsink_cb;
 
@@ -101,7 +109,8 @@ struct gst_backend_priv {
 
 	gint returned_out_buffers_num;
 
-	gulong probe_id;
+	gulong appsink_probe_id;
+	gulong decoder_probe_id;
 
 	/* To wait for the requested number of buffers on CAPTURE
 	   to be set in pad_probe_query() */
@@ -134,7 +143,7 @@ struct gst_backend_priv {
 		GQueue *queue;
 	} v4l2events;
 
-	gboolean got_eos;
+	EOSState eos_state;
 };
 
 static gboolean
@@ -258,20 +267,20 @@ create_pipeline(gchar *pipeline_str)
 }
 
 static gboolean
-get_app_elements(GstElement *pipeline, GstElement **appsrc,
-		 GstElement **appsink)
+get_gst_elements(struct gst_backend_priv *priv)
 {
 	GstIterator *it;
 	gboolean done = FALSE;
 	GValue data = { 0, };
 	GstElement *elem;
-	GstElement *src_elem, *sink_elem;
 	GstElementFactory *factory;
 	const gchar *elem_name;
+	const gchar *klass;
+	const gchar *decoder_klass = "Codec/Decoder/Video";
 
-	src_elem = sink_elem = NULL;
+	priv->appsrc = priv->appsink = priv->decoder = NULL;
 
-	it = gst_bin_iterate_elements(GST_BIN(pipeline));
+	it = gst_bin_iterate_elements(GST_BIN(priv->pipeline));
 	while (!done) {
 		switch (gst_iterator_next(it, &data)) {
 		case GST_ITERATOR_OK:
@@ -281,10 +290,16 @@ get_app_elements(GstElement *pipeline, GstElement **appsrc,
 			elem_name =
 				gst_element_factory_get_metadata(factory,
 						GST_ELEMENT_METADATA_LONGNAME);
+			klass =
+				gst_element_factory_get_metadata(factory,
+						GST_ELEMENT_METADATA_KLASS);
 			if (g_strcmp0(elem_name, "AppSrc") == 0)
-				src_elem = elem;
+				priv->appsrc = elem;
 			else if (g_strcmp0(elem_name, "AppSink") == 0)
-				sink_elem = elem;
+				priv->appsink = elem;
+			else if (strncmp(klass, decoder_klass,
+					 strlen(decoder_klass)))
+				priv->decoder = elem;
 
 			g_value_reset(&data);
 			break;
@@ -298,13 +313,10 @@ get_app_elements(GstElement *pipeline, GstElement **appsrc,
 	g_value_unset(&data);
 	gst_iterator_free(it);
 
-	if (!src_elem || !sink_elem) {
+	if (!priv->appsrc || !priv->appsink) {
 		GST_ERROR("Failed to get app elements from the pipeline");
 		return FALSE;
 	}
-
-	*appsrc = src_elem;
-	*appsink = sink_elem;
 
 	GST_DEBUG("appsrc and appsink elements are found in the pipeline");
 
@@ -650,7 +662,7 @@ release_out_buffer(struct gst_backend_priv *priv, GstBuffer *buffer)
 }
 
 static GstPadProbeReturn
-pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
+appsink_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 {
 	struct gst_backend_priv *priv = user_data;
 	GstQuery *query;
@@ -716,10 +728,42 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 {
 	struct gst_backend_priv *priv = data;
 
-	GST_DEBUG("clear probe_id");
-	priv->probe_id = 0;
+	GST_DEBUG("clear appsink_probe_id");
+	priv->appsink_probe_id = 0;
 
 	g_signal_handlers_disconnect_by_func(self, appsink_pad_unlinked_cb, data);
+}
+
+static GstPadProbeReturn
+decoder_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
+{
+	struct gst_backend_priv *priv = user_data;
+	GstEvent *event;
+	GstPadProbeType type = GST_PAD_PROBE_INFO_TYPE(probe_info);
+
+	if (!(type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)) {
+		return GST_PAD_PROBE_OK;
+	}
+
+	event = GST_PAD_PROBE_INFO_EVENT (probe_info);
+	if (GST_EVENT_TYPE(event) == GST_EVENT_EOS &&
+	    type & GST_PAD_PROBE_TYPE_PUSH) {
+		GST_DEBUG("Got EOS at decoder");
+		priv->eos_state = EOS_DECODER_GOT_EOS;
+	}
+
+	return GST_PAD_PROBE_OK;
+}
+
+static void
+decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
+{
+	struct gst_backend_priv *priv = data;
+
+	GST_DEBUG("clear decoder_probe_id");
+	priv->decoder_probe_id = 0;
+
+	g_signal_handlers_disconnect_by_func(self, decoder_pad_unlinked_cb, data);
 }
 
 static gulong
@@ -732,8 +776,9 @@ setup_query_pad_probe(struct gst_backend_priv *priv)
 	g_signal_connect(G_OBJECT(peer_pad), "unlinked",
 			 G_CALLBACK(appsink_pad_unlinked_cb), priv);
 	probe_id = gst_pad_add_probe(peer_pad,
-				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
-				     (GstPadProbeCallback) pad_probe_query,
+				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM |
+				     GST_PAD_PROBE_TYPE_BUFFER,
+				     appsink_sink_pad_probe,
 				     priv, NULL);
 	gst_object_unref(peer_pad);
 
@@ -760,6 +805,7 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 	struct gst_backend_priv *priv = user_data;
 	if (priv->eos_buffer)
 		release_out_buffer(priv, priv->eos_buffer);
+	priv->eos_state = EOS_NONE;
 	GST_DEBUG("Got EOS event");
 }
 
@@ -801,7 +847,7 @@ static gboolean
 init_app_elements(struct gst_backend_priv *priv)
 {
 	/* Get appsrc and appsink elements respectively from the pipeline */
-	if (!get_app_elements(priv->pipeline, &priv->appsrc, &priv->appsink))
+	if (!get_gst_elements(priv))
 		return FALSE;
 
 	if (!get_supported_video_format_out(priv))
@@ -824,6 +870,19 @@ init_app_elements(struct gst_backend_priv *priv)
 	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
 				   &priv->appsink_cb, priv, NULL);
 
+	if (priv->decoder) {
+		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
+
+		g_signal_connect(G_OBJECT(pad), "unlinked",
+				 G_CALLBACK(decoder_pad_unlinked_cb), priv);
+		priv->decoder_probe_id
+			= gst_pad_add_probe(pad,
+					    GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+					    decoder_sink_pad_probe,
+					     priv, NULL);
+		gst_object_unref(pad);
+	}
+
 	return TRUE;
 }
 
@@ -840,8 +899,8 @@ init_buffer_pool(struct gst_backend_priv *priv)
 	create_buffer_pool(priv->pool_ops, &priv->src_pool, &priv->sink_pool);
 
 	/* To hook allocation queries */
-	priv->probe_id = setup_query_pad_probe(priv);
-	if (priv->probe_id == 0) {
+	priv->appsink_probe_id = setup_query_pad_probe(priv);
+	if (priv->appsink_probe_id == 0) {
 		GST_ERROR("Failed to setup query pad probe");
 		goto free_pool;
 	}
@@ -950,8 +1009,13 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
 
-	if (priv->probe_id)
-		remove_query_pad_probe(priv->appsink, priv->probe_id);
+	if (priv->decoder_probe_id) {
+		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
+		gst_pad_remove_probe(pad, priv->decoder_probe_id);
+		gst_object_unref(pad);
+	}
+	if (priv->appsink_probe_id)
+		remove_query_pad_probe(priv->appsink, priv->appsink_probe_id);
 
 	if (priv->out_buffers)
 		g_free(priv->out_buffers);
@@ -1568,7 +1632,6 @@ qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 	buffer = &priv->out_buffers[buf->index];
 
 	if (buf->m.planes[0].bytesused == 0) {
-		priv->got_eos = TRUE;
 		flow_ret = gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
 		if (flow_ret != GST_FLOW_OK) {
 			GST_ERROR("Failed to send an EOS event");
@@ -1785,10 +1848,12 @@ fill_v4l2_buffer(struct gst_backend_priv *priv, GstBufferPool *pool,
 				     timestamp, buf);
 
 	buf->flags = 0;
-	if (priv->got_eos) {
+	if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
+	    priv->eos_state == EOS_DECODER_GOT_EOS &&
+	    g_queue_is_empty(priv->cap_buffers_queue)) {
 		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
 		buf->flags |= V4L2_BUF_FLAG_LAST;
-		priv->got_eos = FALSE;
+		priv->eos_state = EOS_NONE;
 	}
 
 	/* set unused params */
@@ -1931,8 +1996,15 @@ dqbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 
 	priv->returned_out_buffers_num--;
 
-	if (priv->returned_out_buffers_num == 0)
+	if (priv->returned_out_buffers_num == 0) {
 		clear_event(priv->dev_ops_priv->event_state, POLLIN);
+		if (priv->eos_state == EOS_BEGIN) {
+			GST_DEBUG("Send EOS event");
+			gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
+			priv->eos_state = EOS_WAITING_DECODE;
+		}
+	}
+
 
 	g_mutex_unlock(&priv->queue_mutex);
 
@@ -2869,7 +2941,7 @@ streamon_ioctl_out(struct gst_backend_priv *priv)
 		gst_buffer_unref(priv->out_buffers[0].buffer);
 	}
 
-	priv->got_eos = FALSE;
+	priv->eos_state = EOS_NONE;
 
 	gst_element_set_state(priv->pipeline, GST_STATE_PLAYING);
 
@@ -3594,8 +3666,12 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu",
 			      decoder_cmd->stop.pts);
-		priv->got_eos = TRUE;
-		gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
+		/* Chromium send this command after queueing the last buffer, it
+		   seems the only way for us to know EOS (The EOS procedure in
+		   qbuf_ioctl_out() doesn't seem fired on recent Chromium).
+		   We have to wait finish decode before detecting last frame.*/
+		if (priv->eos_state == EOS_NONE)
+			priv->eos_state = EOS_BEGIN;
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
