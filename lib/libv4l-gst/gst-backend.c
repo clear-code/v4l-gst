@@ -68,7 +68,6 @@ typedef enum {
 	EOS_NONE,
 	EOS_BEGIN,
 	EOS_WAITING_DECODE,
-	EOS_DECODER_GOT_EOS,
 	EOS_GOT
 } EOSState;
 
@@ -111,7 +110,6 @@ struct gst_backend_priv {
 	gint returned_out_buffers_num;
 
 	gulong appsink_probe_id;
-	gulong decoder_probe_id;
 
 	/* To wait for the requested number of buffers on CAPTURE
 	   to be set in pad_probe_query() */
@@ -276,10 +274,8 @@ get_gst_elements(struct gst_backend_priv *priv)
 	GstElement *elem;
 	GstElementFactory *factory;
 	const gchar *elem_name;
-	const gchar *klass;
-	const gchar *decoder_klass = "Codec/Decoder/Video";
 
-	priv->appsrc = priv->appsink = priv->decoder = NULL;
+	priv->appsrc = priv->appsink = NULL;
 
 	it = gst_bin_iterate_elements(GST_BIN(priv->pipeline));
 	while (!done) {
@@ -291,16 +287,10 @@ get_gst_elements(struct gst_backend_priv *priv)
 			elem_name =
 				gst_element_factory_get_metadata(factory,
 						GST_ELEMENT_METADATA_LONGNAME);
-			klass =
-				gst_element_factory_get_metadata(factory,
-						GST_ELEMENT_METADATA_KLASS);
 			if (g_strcmp0(elem_name, "AppSrc") == 0)
 				priv->appsrc = elem;
 			else if (g_strcmp0(elem_name, "AppSink") == 0)
 				priv->appsink = elem;
-			else if (strncmp(klass, decoder_klass,
-					 strlen(decoder_klass)))
-				priv->decoder = elem;
 
 			g_value_reset(&data);
 			break;
@@ -735,38 +725,6 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 	g_signal_handlers_disconnect_by_func(self, appsink_pad_unlinked_cb, data);
 }
 
-static GstPadProbeReturn
-decoder_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
-{
-	struct gst_backend_priv *priv = user_data;
-	GstEvent *event;
-	GstPadProbeType type = GST_PAD_PROBE_INFO_TYPE(probe_info);
-
-	if (!(type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)) {
-		return GST_PAD_PROBE_OK;
-	}
-
-	event = GST_PAD_PROBE_INFO_EVENT (probe_info);
-	if (GST_EVENT_TYPE(event) == GST_EVENT_EOS &&
-	    type & GST_PAD_PROBE_TYPE_PUSH) {
-		GST_DEBUG("Got EOS at decoder");
-		priv->eos_state = EOS_DECODER_GOT_EOS;
-	}
-
-	return GST_PAD_PROBE_OK;
-}
-
-static void
-decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
-{
-	struct gst_backend_priv *priv = data;
-
-	GST_DEBUG("clear decoder_probe_id");
-	priv->decoder_probe_id = 0;
-
-	g_signal_handlers_disconnect_by_func(self, decoder_pad_unlinked_cb, data);
-}
-
 static gulong
 setup_query_pad_probe(struct gst_backend_priv *priv)
 {
@@ -877,19 +835,6 @@ init_app_elements(struct gst_backend_priv *priv)
 
 	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
 				   &priv->appsink_cb, priv, NULL);
-
-	if (priv->decoder) {
-		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
-
-		g_signal_connect(G_OBJECT(pad), "unlinked",
-				 G_CALLBACK(decoder_pad_unlinked_cb), priv);
-		priv->decoder_probe_id
-			= gst_pad_add_probe(pad,
-					    GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-					    decoder_sink_pad_probe,
-					     priv, NULL);
-		gst_object_unref(pad);
-	}
 
 	return TRUE;
 }
@@ -1017,11 +962,6 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
 
-	if (priv->decoder_probe_id) {
-		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
-		gst_pad_remove_probe(pad, priv->decoder_probe_id);
-		gst_object_unref(pad);
-	}
 	if (priv->appsink_probe_id)
 		remove_query_pad_probe(priv->appsink, priv->appsink_probe_id);
 
