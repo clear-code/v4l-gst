@@ -412,7 +412,7 @@ fill_config_video_format_out(struct gst_backend_priv *priv)
 	}
 	if (priv->config.hevc_pipeline) {
 		fmt.fourcc = V4L2_PIX_FMT_HEVC;
-		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_VEVC", FMTDESC_NAME_LENGTH);
+		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
 		g_array_append_vals(priv->out_fmts, &fmt, 1);
 	}
 	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
