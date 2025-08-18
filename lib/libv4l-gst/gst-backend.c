@@ -66,7 +66,6 @@ struct fmt {
 
 typedef enum {
 	EOS_NONE,
-	EOS_BEGIN,
 	EOS_WAITING_DECODE,
 	EOS_GOT
 } EOSState;
@@ -1953,11 +1952,6 @@ dqbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 
 	if (priv->returned_out_buffers_num == 0) {
 		clear_event(priv->dev_ops_priv->event_state, POLLIN);
-		if (priv->eos_state == EOS_BEGIN) {
-			GST_DEBUG("Send EOS event");
-			gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
-			priv->eos_state = EOS_WAITING_DECODE;
-		}
 	}
 
 
@@ -3625,8 +3619,10 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		   seems the only way for us to know EOS (The EOS procedure in
 		   qbuf_ioctl_out() doesn't seem fired on recent Chromium).
 		   We have to wait finish decode before detecting last frame.*/
-		if (priv->eos_state == EOS_NONE)
-			priv->eos_state = EOS_BEGIN;
+		if (priv->eos_state == EOS_NONE) {
+			priv->eos_state = EOS_WAITING_DECODE;
+			gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
+		}
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
