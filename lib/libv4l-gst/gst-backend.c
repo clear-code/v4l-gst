@@ -68,7 +68,8 @@ typedef enum {
 	EOS_NONE,
 	EOS_BEGIN,
 	EOS_WAITING_DECODE,
-	EOS_DECODER_GOT_EOS
+	EOS_DECODER_GOT_EOS,
+	EOS_GOT
 } EOSState;
 
 struct gst_backend_priv {
@@ -805,7 +806,13 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 	struct gst_backend_priv *priv = user_data;
 	if (priv->eos_buffer)
 		release_out_buffer(priv, priv->eos_buffer);
-	priv->eos_state = EOS_NONE;
+	priv->eos_state = EOS_GOT;
+	g_mutex_lock(&priv->queue_mutex);
+	if (priv->cap_buffers_queue &&
+	    !g_queue_is_empty(priv->cap_buffers_queue)) {
+	    set_event(priv->dev_ops_priv->event_state, POLLOUT);
+	}
+	g_mutex_unlock(&priv->queue_mutex);
 	GST_DEBUG("Got EOS event");
 }
 
@@ -814,7 +821,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 {
 	struct gst_backend_priv *priv = user_data;
 	GstBuffer *buffer;
-	gboolean is_empty;
+	guint len;
 	GQueue *queue;
 
 	buffer = pull_buffer_from_sample(appsink);
@@ -828,10 +835,11 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	is_empty = g_queue_is_empty(queue);
 	g_queue_push_tail(queue, buffer);
+	len = g_queue_get_length(queue);
 
-	if (is_empty) {
+	if (len == 2 || (len == 1 && priv->eos_state == EOS_GOT)) {
+		/* cache 1 buffer to detect EOS */
 		g_cond_signal(&priv->queue_cond);
 		set_event(priv->dev_ops_priv->event_state, POLLOUT);
 	} else if (!priv->cap_buffers) {
@@ -1849,11 +1857,12 @@ fill_v4l2_buffer(struct gst_backend_priv *priv, GstBufferPool *pool,
 
 	buf->flags = 0;
 	if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
-	    priv->eos_state == EOS_DECODER_GOT_EOS &&
+	    priv->eos_state == EOS_GOT &&
 	    g_queue_is_empty(priv->cap_buffers_queue)) {
 		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
 		buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
+		clear_event(priv->dev_ops_priv->event_state, POLLOUT);
 	}
 
 	/* set unused params */
@@ -1925,16 +1934,22 @@ dequeue_buffer(struct gst_backend_priv *priv, GQueue *queue, GCond *cond,
 	else
 		buffer = dequeue_blocking(priv, queue, cond);
 
-	if (buffer) {
-		if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE &&
-		    priv->returned_out_buffers_num == 0) {
+	if (!buffer)
+		goto unlock;
+
+	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		if (priv->returned_out_buffers_num == 0)
 			clear_event(priv->dev_ops_priv->event_state, POLLIN);
-		} else if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
-			   g_queue_is_empty(priv->cap_buffers_queue)) {
+	} else if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		guint len = g_queue_get_length(priv->cap_buffers_queue);
+
+		/* cache 1 buffer to detect EOS */
+		if ((priv->eos_state != EOS_GOT && len == 1) || len == 0) {
 			clear_event(priv->dev_ops_priv->event_state, POLLOUT);
 		}
 	}
 
+ unlock:
 	g_mutex_unlock(&priv->queue_mutex);
 
 	return buffer;
