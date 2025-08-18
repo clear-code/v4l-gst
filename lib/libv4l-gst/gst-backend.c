@@ -108,7 +108,7 @@ struct gst_backend_priv {
 
 	gint returned_out_buffers_num;
 
-	gulong appsink_probe_id;
+	gulong probe_id;
 
 	/* To wait for the requested number of buffers on CAPTURE
 	   to be set in pad_probe_query() */
@@ -652,7 +652,7 @@ release_out_buffer(struct gst_backend_priv *priv, GstBuffer *buffer)
 }
 
 static GstPadProbeReturn
-appsink_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
+pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 {
 	struct gst_backend_priv *priv = user_data;
 	GstQuery *query;
@@ -718,8 +718,8 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 {
 	struct gst_backend_priv *priv = data;
 
-	GST_DEBUG("clear appsink_probe_id");
-	priv->appsink_probe_id = 0;
+	GST_DEBUG("clear probe_id");
+	priv->probe_id = 0;
 
 	g_signal_handlers_disconnect_by_func(self, appsink_pad_unlinked_cb, data);
 }
@@ -736,7 +736,7 @@ setup_query_pad_probe(struct gst_backend_priv *priv)
 	probe_id = gst_pad_add_probe(peer_pad,
 				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM |
 				     GST_PAD_PROBE_TYPE_BUFFER,
-				     appsink_sink_pad_probe,
+				     pad_probe_query,
 				     priv, NULL);
 	gst_object_unref(peer_pad);
 
@@ -851,8 +851,8 @@ init_buffer_pool(struct gst_backend_priv *priv)
 	create_buffer_pool(priv->pool_ops, &priv->src_pool, &priv->sink_pool);
 
 	/* To hook allocation queries */
-	priv->appsink_probe_id = setup_query_pad_probe(priv);
-	if (priv->appsink_probe_id == 0) {
+	priv->probe_id = setup_query_pad_probe(priv);
+	if (priv->probe_id == 0) {
 		GST_ERROR("Failed to setup query pad probe");
 		goto free_pool;
 	}
@@ -961,8 +961,8 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
 
-	if (priv->appsink_probe_id)
-		remove_query_pad_probe(priv->appsink, priv->appsink_probe_id);
+	if (priv->probe_id)
+		remove_query_pad_probe(priv->appsink, priv->probe_id);
 
 	if (priv->out_buffers)
 		g_free(priv->out_buffers);
