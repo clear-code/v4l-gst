@@ -77,7 +77,6 @@ struct gst_backend_priv {
 	GstElement *pipeline;
 	GstElement *appsrc;
 	GstElement *appsink;
-	GstElement *decoder;
 
 	GstAppSinkCallbacks appsink_cb;
 
