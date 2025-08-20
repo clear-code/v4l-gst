@@ -1597,7 +1597,7 @@ qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 	}
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
-		GST_ERROR("Invalid buffer state");
+		GST_ERROR("Buffer %u is already queued", buf->index);
 		errno = EINVAL;
 		return -1;
 	}
@@ -1684,7 +1684,7 @@ qbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 	buffer = &priv->cap_buffers[buf->index];
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
-		GST_ERROR("Invalid buffer state");
+		GST_ERROR("Buffer %u is already queued", buf->index);
 		errno = EINVAL;
 		return -1;
 	}
@@ -2284,49 +2284,67 @@ force_out_dqbuf(struct gst_backend_priv *priv)
 	return 0;
 }
 
-#if 0
 static int
 force_cap_dqbuf(struct gst_backend_priv *priv)
 {
 	GstBuffer *buffer;
-	guint index;
-	GstFlowReturn flow_ret;
+	guint index, remained = 0;
 
-	g_mutex_lock(&priv->queue_mutex);
+	do {
+		g_mutex_lock(&priv->queue_mutex);
+		buffer = dequeue_non_blocking(priv->cap_buffers_queue);
+		 /* This function may set errno but not need to expose it to
+		    clients in this case */
+		errno = 0;
+		g_mutex_unlock(&priv->queue_mutex);
 
-	buffer = dequeue_non_blocking(priv->cap_buffers_queue);
-	while (buffer) {
+		if (!buffer)
+			break;
+
 		index = get_v4l2_buffer_index(priv->cap_buffers,
 					      priv->cap_buffers_num, buffer);
 		if (index >= priv->cap_buffers_num) {
 			GST_ERROR("Failed to get a valid buffer index "
 				  "on CAPTURE");
-			g_mutex_unlock(&priv->queue_mutex);
 			errno = EINVAL;
 			return -1;
 		}
 
 		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
-
-		buffer = dequeue_non_blocking(priv->cap_buffers_queue);
-	}
+		GST_DEBUG("CAPTURE buffer %u is forcedly dequeued", index);
+	} while (buffer);
 
 	clear_event(priv->dev_ops_priv->event_state, POLLOUT);
 
-	g_mutex_unlock(&priv->queue_mutex);
+#if 0
+	/* TODO:
+	   Need to flush GStOMXBufferPool safely but not sure how to do it yet.
+	   It returns same buffer address in this loop, and force acquire causes
+	   clash. */
+	{
+		GstFlowReturn flow_ret;
+		buffer = NULL;
+		do {
+			flow_ret = force_dqbuf_from_pool(priv->sink_pool,
+							 priv->cap_buffers,
+							 priv->cap_buffers_num,
+							 false,
+							 &buffer);
+		} while (flow_ret == GST_FLOW_OK);
+	}
+#endif
 
-	buffer = NULL;
-	do {
-		flow_ret = force_dqbuf_from_pool(priv->sink_pool,
-						 priv->cap_buffers,
-						 priv->cap_buffers_num,
-						 false,
-						 &buffer);
-	} while (flow_ret == GST_FLOW_OK);
+	for (index = 0; index < priv->cap_buffers_num; index++) {
+		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_QUEUED)
+			++remained;
+	}
+	if (remained > 0) {
+		GST_WARNING("%u/%u CAPTURE buffers are still queued",
+			    remained, priv->cap_buffers_num);
+	}
 
 	return 0;
 }
-#endif
 
 static int
 flush_pipeline(struct gst_backend_priv *priv)
@@ -2387,13 +2405,10 @@ flush_buffer_queues:
 	ret = force_out_dqbuf(priv);
 	if (ret < 0)
 		return ret;
-#if 0
-	/* TODO: Need to check whether it's not really needed, removing it seems
-	   make everything quit stable though. */
+
 	ret = force_cap_dqbuf(priv);
 	if (ret < 0)
 		return ret;
-#endif
 
 	/* The reference counted up below will be unreffed when calling
 	   the streamon ioctl. This prevents from returning all the buffers
