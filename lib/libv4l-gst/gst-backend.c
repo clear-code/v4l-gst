@@ -3615,10 +3615,11 @@ decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_decoder_cmd: V4L2_DEC_CMD_STOP pts: %llu",
 			      decoder_cmd->stop.pts);
-		/* Chromium send this command after queueing the last buffer, it
-		   seems the only way for us to know EOS (The EOS procedure in
-		   qbuf_ioctl_out() doesn't seem fired on recent Chromium).
-		   We have to wait finish decode before detecting last frame.*/
+		/* Clients send this command after queueing the last incoming
+		   buffer. To detect the last decoded frame, we need to cache
+		   an outgoing buffer and wait EOS event from the pipeline.
+		   ref: https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/dev-decoder.html#drain
+		*/
 		if (priv->eos_state == EOS_NONE) {
 			priv->eos_state = EOS_WAITING_DECODE;
 			gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
