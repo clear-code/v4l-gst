@@ -2011,6 +2011,14 @@ dqbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 
 	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(buffer), timestamp);
 
+	if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
+		/* It might be occurred when a buffer is unexpectedly queued
+		   after streamoff_ioctl_out(). In this case reference count of
+		   the buffer should have been already incremeneted, need to
+		   revert it here. */
+		GST_WARNING("Already dequeued buffer %u is dequeued again", index);
+		gst_buffer_unref(priv->cap_buffers[index].buffer);
+	}
 	priv->cap_buffers[buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
 	GST_TRACE("success dequeue buffer index=%d buffer=%p ts=%ld",
@@ -2288,7 +2296,7 @@ static int
 force_cap_dqbuf(struct gst_backend_priv *priv)
 {
 	GstBuffer *buffer;
-	guint index, remained = 0;
+	guint index;
 
 	do {
 		g_mutex_lock(&priv->queue_mutex);
@@ -2316,31 +2324,11 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 
 	clear_event(priv->dev_ops_priv->event_state, POLLOUT);
 
-#if 0
-	/* TODO:
-	   Need to flush GStOMXBufferPool safely but not sure how to do it yet.
-	   It returns same buffer address in this loop, and force acquire causes
-	   clash. */
-	{
-		GstFlowReturn flow_ret;
-		buffer = NULL;
-		do {
-			flow_ret = force_dqbuf_from_pool(priv->sink_pool,
-							 priv->cap_buffers,
-							 priv->cap_buffers_num,
-							 false,
-							 &buffer);
-		} while (flow_ret == GST_FLOW_OK);
-	}
-#endif
-
 	for (index = 0; index < priv->cap_buffers_num; index++) {
-		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_QUEUED)
-			++remained;
-	}
-	if (remained > 0) {
-		GST_WARNING("%u/%u CAPTURE buffers are still queued",
-			    remained, priv->cap_buffers_num);
+		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED)
+			continue;
+		gst_buffer_ref(priv->cap_buffers[index].buffer);
+		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
 	}
 
 	return 0;
