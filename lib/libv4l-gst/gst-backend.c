@@ -465,7 +465,6 @@ get_supported_video_format_cap(struct gst_backend_priv *priv)
 	const GValue *val, *list_val;
 	const gchar *fmt_str;
 	GstVideoFormat fmt;
-	gint list_size;
 	guint i, j;
 	struct fmt color_fmt;
 
@@ -480,8 +479,9 @@ get_supported_video_format_cap(struct gst_backend_priv *priv)
 			("video/x-raw, format=" GST_VIDEO_FORMATS_ALL);
 	}
 
+	GST_DEBUG("caps: %" GST_PTR_FORMAT, caps);
+
 	structs = gst_caps_get_size(caps);
-	list_size = 2; // Add space for legacy RGB formats if available */
 
 	for (j = 0; j < structs; j++) {
 		gint num_cap_formats;
@@ -490,11 +490,12 @@ get_supported_video_format_cap(struct gst_backend_priv *priv)
 		if (!val)
 			continue;
 
-		num_cap_formats = gst_value_list_get_size(val);
-		list_size += num_cap_formats;
+		num_cap_formats = GST_VALUE_HOLDS_LIST(val) ?
+			gst_value_list_get_size(val) : 1;
 
 		for (i = 0; i < num_cap_formats; i++) {
-			list_val = gst_value_list_get_value(val, i);
+			list_val = GST_VALUE_HOLDS_LIST(val) ?
+				gst_value_list_get_value(val, i) : val;
 			fmt_str = g_value_get_string(list_val);
 
 			fmt = gst_video_format_from_string(fmt_str);
@@ -514,18 +515,21 @@ get_supported_video_format_cap(struct gst_backend_priv *priv)
 
 			g_strlcpy(color_fmt.desc, fmt_str, FMTDESC_NAME_LENGTH);
 
+			g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+
 			/* Add legacy RGB formats */
 			if (color_fmt.fourcc == V4L2_PIX_FMT_ARGB32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_RGB32;
 				g_strlcpy(color_fmt.desc,
-					  fmt_str, FMTDESC_NAME_LENGTH);
+					  "RGB4", FMTDESC_NAME_LENGTH);
+				g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
 			} else if (color_fmt.fourcc == V4L2_PIX_FMT_ABGR32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_BGR32;
-				g_strlcpy(color_fmt.desc,
-					  fmt_str, FMTDESC_NAME_LENGTH);
-			}
 
-			g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+				g_strlcpy(color_fmt.desc,
+					  "BGR4", FMTDESC_NAME_LENGTH);
+				g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+			}
 		}
 	}
 
