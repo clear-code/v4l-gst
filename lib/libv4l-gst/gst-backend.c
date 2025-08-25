@@ -813,28 +813,6 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 }
 
 static gboolean
-appsink_callback_new_event(GstAppSink *appsink, gpointer user_data)
-{
-	GstMiniObject *obj = gst_app_sink_pull_object(appsink);
-	GstEvent *event;
-
-	if (!GST_IS_EVENT(obj))
-		goto unref;
-
-	event = GST_EVENT_CAST(obj);
-	GST_DEBUG("Got %s event", GST_EVENT_TYPE_NAME(event));
-
- unref:
-	gst_mini_object_unref(obj);
-
-	/* GStAppSink queues all incoming event until stop() or
-	   GST_EVENT_FLUSH_STOP is called if new_event callback isn't
-	   implemented. It causes noisy refcount up of AppSink.
-	   To prevent it, implement empty callback and return TRUE here. */
-	return TRUE;
-}
-
-static gboolean
 init_app_elements(struct gst_backend_priv *priv)
 {
 	/* Get appsrc and appsink elements respectively from the pipeline */
@@ -855,9 +833,8 @@ init_app_elements(struct gst_backend_priv *priv)
 	   The amount of buffers is managed by the buffer pool. */
 	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
 
-	priv->appsink_cb.eos = appsink_callback_eos;
 	priv->appsink_cb.new_sample = appsink_callback_new_sample;
-	priv->appsink_cb.new_event = appsink_callback_new_event;
+	priv->appsink_cb.eos = appsink_callback_eos;
 
 	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
 				   &priv->appsink_cb, priv, NULL);
