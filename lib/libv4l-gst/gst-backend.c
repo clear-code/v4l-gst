@@ -349,14 +349,36 @@ get_buffer_pool_ops(gchar *pool_lib_path, void **pool_lib_handle,
 }
 
 static GstPad *
-get_peer_pad(GstElement *elem, const gchar *pad_name)
+get_peer_pad(GstElement *elem, const gchar *pad_name, gboolean skip_queue)
 {
-	GstPad *pad;
-	GstPad *peer_pad;
+	GstPad *peer_pad = NULL;
+	GstElement *element = elem;
 
-	pad = gst_element_get_static_pad(elem, pad_name);
-	peer_pad = gst_pad_get_peer(pad);
-	gst_object_unref(pad);
+	g_object_ref(element);
+
+	do {
+		GstPad *pad = gst_element_get_static_pad(element, pad_name);
+		GstElement *holder;
+		const gchar *name;
+
+		if (!pad)
+			break;
+		peer_pad = gst_pad_get_peer(pad);
+		gst_object_unref(pad);
+		if (!peer_pad)
+			break;
+		holder = gst_pad_get_parent_element(peer_pad);
+		name = gst_element_get_metadata(holder,
+						GST_ELEMENT_METADATA_LONGNAME);
+		if (skip_queue && !strcmp("Queue", name)) {
+			g_object_unref(element);
+			g_object_unref(peer_pad);
+			peer_pad = NULL;
+			element = holder;
+		}
+	} while(!peer_pad);
+
+	g_object_unref(element);
 
 	return peer_pad;
 }
@@ -367,7 +389,7 @@ get_peer_element(GstElement *elem, const gchar *pad_name)
 	GstPad *peer_pad;
 	GstElement *peer_elem;
 
-	peer_pad = get_peer_pad(elem, pad_name);
+	peer_pad = get_peer_pad(elem, pad_name, FALSE);
 	peer_elem = gst_pad_get_parent_element(peer_pad);
 	gst_object_unref(peer_pad);
 
@@ -380,7 +402,7 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 	GstPad *peer_pad;
 	GstCaps *caps;
 
-	peer_pad = get_peer_pad(elem, pad_name);
+	peer_pad = get_peer_pad(elem, pad_name, TRUE);
 	caps = GST_PAD_TEMPLATE_CAPS(GST_PAD_PAD_TEMPLATE(peer_pad));
 	gst_caps_ref(caps);
 	gst_object_unref(peer_pad);
@@ -474,6 +496,7 @@ get_supported_video_format_cap(struct gst_backend_priv *priv)
 
 	/* We treat GST_CAPS_ANY as all video formats support. */
 	if (gst_caps_is_any(caps)) {
+		GST_DEBUG("Use GST_VIDEO_FORMATS_ALL");
 		gst_caps_unref(caps);
 		caps = gst_caps_from_string
 			("video/x-raw, format=" GST_VIDEO_FORMATS_ALL);
@@ -734,7 +757,7 @@ setup_query_pad_probe(struct gst_backend_priv *priv)
 	GstPad *peer_pad;
 	gulong probe_id;
 
-	peer_pad = get_peer_pad(priv->appsink, "sink");
+	peer_pad = get_peer_pad(priv->appsink, "sink", TRUE);
 	g_signal_connect(G_OBJECT(peer_pad), "unlinked",
 			 G_CALLBACK(appsink_pad_unlinked_cb), priv);
 	probe_id = gst_pad_add_probe(peer_pad,
@@ -943,7 +966,7 @@ remove_query_pad_probe(GstElement *appsink, gulong probe_id)
 {
 	GstPad *peer_pad;
 
-	peer_pad = get_peer_pad(appsink, "sink");
+	peer_pad = get_peer_pad(appsink, "sink", TRUE);
 	gst_pad_remove_probe(peer_pad, probe_id);
 	gst_object_unref(peer_pad);
 }
