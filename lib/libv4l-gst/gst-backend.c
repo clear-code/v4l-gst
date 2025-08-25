@@ -767,8 +767,7 @@ setup_query_pad_probe(struct v4l_gst *priv)
 	g_signal_connect(G_OBJECT(peer_pad), "unlinked",
 			 G_CALLBACK(appsink_pad_unlinked_cb), priv);
 	probe_id = gst_pad_add_probe(peer_pad,
-				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM |
-				     GST_PAD_PROBE_TYPE_BUFFER,
+				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
 				     pad_probe_query,
 				     priv, NULL);
 	gst_object_unref(peer_pad);
