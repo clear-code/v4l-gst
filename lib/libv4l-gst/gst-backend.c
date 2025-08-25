@@ -25,6 +25,10 @@
 #include <poll.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/eventfd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "libv4l-gst-bufferpool.h"
 
@@ -55,7 +59,7 @@ struct v4l_gst_buffer {
 
 	struct v4l2_plane planes[GST_VIDEO_MAX_PLANES];
 
-	struct gst_backend_priv *priv;
+	struct v4l_gst *priv;
 
 	enum buffer_state state;
 };
@@ -71,8 +75,10 @@ typedef enum {
 	EOS_GOT
 } EOSState;
 
-struct gst_backend_priv {
-	struct v4l_gst_priv *dev_ops_priv;
+struct v4l_gst {
+	int plugin_fd;
+	gboolean is_non_blocking;
+	struct event_state *event_state;
 
 	GstElement *pipeline;
 	GstElement *appsrc;
@@ -145,7 +151,7 @@ struct gst_backend_priv {
 };
 
 static gboolean
-parse_config_file(struct gst_backend_priv *priv)
+parse_config_file(struct v4l_gst *priv)
 {
 	const gchar *const *sys_conf_dirs;
 	GKeyFile *conf_key;
@@ -265,7 +271,7 @@ create_pipeline(gchar *pipeline_str)
 }
 
 static gboolean
-get_gst_elements(struct gst_backend_priv *priv)
+get_gst_elements(struct v4l_gst *priv)
 {
 	GstIterator *it;
 	gboolean done = FALSE;
@@ -411,7 +417,7 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
 }
 
 static gboolean
-fill_config_video_format_out(struct gst_backend_priv *priv)
+fill_config_video_format_out(struct v4l_gst *priv)
 {
 	struct fmt fmt;
 
@@ -440,7 +446,7 @@ fill_config_video_format_out(struct gst_backend_priv *priv)
 }
 
 static gboolean
-get_supported_video_format_out(struct gst_backend_priv *priv)
+get_supported_video_format_out(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 	GstStructure *structure;
@@ -479,7 +485,7 @@ get_supported_video_format_out(struct gst_backend_priv *priv)
 }
 
 static gboolean
-get_supported_video_format_cap(struct gst_backend_priv *priv)
+get_supported_video_format_cap(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 	GstStructure *structure;
@@ -614,7 +620,7 @@ get_buffer_pool_params(GstBufferPool *pool, GstCaps **caps, guint *buf_size,
 }
 
 static void
-push_source_change_event(struct gst_backend_priv *priv)
+push_source_change_event(struct v4l_gst *priv)
 {
 	struct v4l2_event *event = g_new0(struct v4l2_event, 1);
 
@@ -631,7 +637,7 @@ push_source_change_event(struct gst_backend_priv *priv)
 }
 
 static void
-retrieve_cap_format_info(struct gst_backend_priv *priv, GstVideoInfo *info)
+retrieve_cap_format_info(struct v4l_gst *priv, GstVideoInfo *info)
 {
 	gint fourcc;
 
@@ -649,7 +655,7 @@ retrieve_cap_format_info(struct gst_backend_priv *priv, GstVideoInfo *info)
 }
 
 static void
-wait_for_cap_reqbuf_invocation(struct gst_backend_priv *priv)
+wait_for_cap_reqbuf_invocation(struct v4l_gst *priv)
 {
 	g_mutex_lock(&priv->cap_reqbuf_mutex);
 	while (priv->cap_buffers_num <= 0)
@@ -658,18 +664,18 @@ wait_for_cap_reqbuf_invocation(struct gst_backend_priv *priv)
 }
 
 static inline void
-release_out_buffer_unlocked(struct gst_backend_priv *priv, GstBuffer *buffer)
+release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *buffer)
 {
 	GST_TRACE("unref buffer: %p", buffer);
 	gst_buffer_unref(buffer);
 
-	set_event(priv->dev_ops_priv->event_state, POLLIN);
+	set_event(priv->event_state, POLLIN);
 
 	priv->returned_out_buffers_num++;
 }
 
 static inline void
-release_out_buffer(struct gst_backend_priv *priv, GstBuffer *buffer)
+release_out_buffer(struct v4l_gst *priv, GstBuffer *buffer)
 {
 	g_mutex_lock(&priv->queue_mutex);
 
@@ -681,7 +687,7 @@ release_out_buffer(struct gst_backend_priv *priv, GstBuffer *buffer)
 static GstPadProbeReturn
 pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 {
-	struct gst_backend_priv *priv = user_data;
+	struct v4l_gst *priv = user_data;
 	GstQuery *query;
 	GstCaps *caps;
 	GstVideoInfo info;
@@ -713,7 +719,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
 		push_source_change_event(priv);
 
-		set_event(priv->dev_ops_priv->event_state, POLLOUT);
+		set_event(priv->event_state, POLLOUT);
 		wait_for_cap_reqbuf_invocation(priv);
 
 		/* Even if a min value is set here, omxvideodec will reset it
@@ -743,7 +749,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 static void
 appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 {
-	struct gst_backend_priv *priv = data;
+	struct v4l_gst *priv = data;
 
 	GST_DEBUG("clear probe_id");
 	priv->probe_id = 0;
@@ -752,7 +758,7 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 }
 
 static gulong
-setup_query_pad_probe(struct gst_backend_priv *priv)
+setup_query_pad_probe(struct v4l_gst *priv)
 {
 	GstPad *peer_pad;
 	gulong probe_id;
@@ -787,14 +793,14 @@ pull_buffer_from_sample(GstAppSink *appsink)
 static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
-	struct gst_backend_priv *priv = user_data;
+	struct v4l_gst *priv = user_data;
 	if (priv->eos_buffer)
 		release_out_buffer(priv, priv->eos_buffer);
 	priv->eos_state = EOS_GOT;
 	g_mutex_lock(&priv->queue_mutex);
 	if (priv->cap_buffers_queue &&
 	    !g_queue_is_empty(priv->cap_buffers_queue)) {
-	    set_event(priv->dev_ops_priv->event_state, POLLOUT);
+	    set_event(priv->event_state, POLLOUT);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
 	GST_DEBUG("Got EOS event");
@@ -803,7 +809,7 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 static GstFlowReturn
 appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 {
-	struct gst_backend_priv *priv = user_data;
+	struct v4l_gst *priv = user_data;
 	GstBuffer *buffer;
 	guint len;
 	GQueue *queue;
@@ -825,7 +831,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 	if (len == 2 || (len == 1 && priv->eos_state == EOS_GOT)) {
 		/* cache 1 buffer to detect EOS */
 		g_cond_signal(&priv->queue_cond);
-		set_event(priv->dev_ops_priv->event_state, POLLOUT);
+		set_event(priv->event_state, POLLOUT);
 	} else if (!priv->cap_buffers) {
 		g_cond_signal(&priv->queue_cond);
 	}
@@ -836,7 +842,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 }
 
 static gboolean
-init_app_elements(struct gst_backend_priv *priv)
+init_app_elements(struct v4l_gst *priv)
 {
 	/* Get appsrc and appsink elements respectively from the pipeline */
 	if (!get_gst_elements(priv))
@@ -866,7 +872,7 @@ init_app_elements(struct gst_backend_priv *priv)
 }
 
 static gboolean
-init_buffer_pool(struct gst_backend_priv *priv)
+init_buffer_pool(struct v4l_gst *priv)
 {
 	/* Get the external buffer pool when it is specified in
 	   the configuration file */
@@ -896,18 +902,39 @@ free_pool:
 	return FALSE;
 }
 
-int
-gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
+struct v4l_gst*
+gst_backend_init(int fd)
 {
-	struct gst_backend_priv *priv;
+	struct v4l_gst *priv;
+	struct stat buf;
+	int flags;
 
 	priv = calloc(1, sizeof(*priv));
 	if (!priv) {
 		perror("Couldn't allocate memory for gst-backend");
-		return -1;
+		return NULL;
 	}
 
-	priv->dev_ops_priv = dev_ops_priv;
+	/* Reject character device */
+	fstat(fd, &buf);
+	if (S_ISCHR(buf.st_mode))
+		return NULL;
+
+	flags = fcntl(fd, F_GETFL);
+	priv->is_non_blocking = (flags & O_NONBLOCK) ? TRUE : FALSE;
+	GST_DEBUG("non-blocking : %s", (priv->is_non_blocking) ? "on" : "off");
+
+	/*For handling event state */
+	priv->event_state = new_event_state();
+	if (!priv->event_state)
+		goto error;
+
+	if (dup2(event_state_fd(priv->event_state), fd) < 0) {
+		GST_ERROR("dup2 failed");
+		goto error;
+	}
+
+	priv->plugin_fd = fd;
 
 	gst_init(NULL, NULL);
 	GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
@@ -942,11 +969,8 @@ gst_backend_init(struct v4l_gst_priv *dev_ops_priv)
 
 	g_mutex_init(&priv->dev_lock);
 
-	dev_ops_priv->gst_priv = priv;
-
-
 	GST_DEBUG("Initialized gst backend");
-	return 0;
+	return priv;
 
 error:
 	if (priv->out_fmts)
@@ -956,9 +980,11 @@ error:
 	g_free(priv->config.h264_pipeline);
 	g_free(priv->config.hevc_pipeline);
 	g_free(priv->config.pool_lib_path);
+	if (priv->event_state)
+		delete_event_state(priv->event_state);
 	g_free(priv);
 
-	return -1;
+	return NULL;
 }
 
 static void
@@ -972,10 +998,8 @@ remove_query_pad_probe(GstElement *appsink, gulong probe_id)
 }
 
 void
-gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
+gst_backend_deinit(struct v4l_gst *priv)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
-
 	GST_DEBUG("gst_backend_deinit start");
 
 	g_mutex_clear(&priv->dev_lock);
@@ -1024,14 +1048,15 @@ gst_backend_deinit(struct v4l_gst_priv *dev_ops_priv)
 	g_free(priv->config.hevc_pipeline);
 	g_free(priv->config.pool_lib_path);
 
+	delete_event_state(priv->event_state);
+
 	g_free(priv);
-	dev_ops_priv->gst_priv = NULL;
 
 	GST_DEBUG("gst_backend_deinit end");
 }
 
 int
-querycap_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_capability *cap)
+querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
 {
 	GST_DEBUG("VIDIOC_QUERYCAP");
 
@@ -1085,7 +1110,7 @@ set_params_as_encoded_stream(struct v4l2_pix_format_mplane *pix_fmt)
 }
 
 static int
-set_fmt_ioctl_out(struct gst_backend_priv *priv, struct v4l2_format *fmt)
+set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 	gchar fourcc_str[5];
@@ -1185,7 +1210,7 @@ init_decoded_frame_params(struct v4l2_pix_format_mplane *pix_fmt)
 }
 
 static int
-set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
+set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 
@@ -1227,9 +1252,8 @@ set_fmt_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_format *fmt)
 }
 
 int
-set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
+set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_DEBUG("VIDIOC_S_FMT: type: %s (0x%x)",
@@ -1253,7 +1277,7 @@ set_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 }
 
 static int
-get_fmt_ioctl_cap(struct gst_backend_priv *priv,
+get_fmt_ioctl_cap(struct v4l_gst *priv,
 		  struct v4l2_pix_format_mplane *pix_fmt)
 {
 	gint i;
@@ -1295,9 +1319,8 @@ get_fmt_ioctl_cap(struct gst_backend_priv *priv,
 }
 
 int
-get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
+get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	struct v4l2_pix_format_mplane *pix_fmt;
 	int ret;
 
@@ -1325,9 +1348,8 @@ get_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *fmt)
 }
 
 int
-enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
+enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	struct fmt *fmts;
 	gint fmts_num;
 	gchar fourcc_str[5];
@@ -1367,9 +1389,8 @@ enum_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_fmtdesc *desc)
 }
 
 int
-enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum *argp)
+enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	gchar fourcc_str[5];
 
 	fourcc_to_string(argp->pixel_format, fourcc_str);
@@ -1435,9 +1456,8 @@ enum_framesizes_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_frmsizeenum
 }
 
 int
-get_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_control *ctrl)
+get_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_control *ctrl)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_DEBUG("VIDIOC_G_CTRL: id: 0x%x value: 0x%x", ctrl->id, ctrl->value);
@@ -1458,9 +1478,8 @@ get_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_control *ctrl)
 }
 
 int
-get_ext_ctrl_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_ext_controls *ext_ctrls)
+get_ext_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_ctrls)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	unsigned int i;
 
 #ifdef ENABLE_VIDIOC_DEBUG
@@ -1584,7 +1603,7 @@ static void
 notify_unref(gpointer data)
 {
 	struct v4l_gst_buffer *buffer = data;
-	struct gst_backend_priv *priv;
+	struct v4l_gst *priv;
 
 	priv = buffer->priv;
 
@@ -1592,7 +1611,7 @@ notify_unref(gpointer data)
 }
 
 static int
-qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
+qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
 	GstFlowReturn flow_ret;
 	GstBuffer *wrapped_buffer;
@@ -1675,7 +1694,7 @@ qbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 }
 
 static gboolean
-push_to_cap_buffers_queue(struct gst_backend_priv *priv, GstBuffer *buffer)
+push_to_cap_buffers_queue(struct v4l_gst *priv, GstBuffer *buffer)
 {
 	gboolean is_empty;
 	gint index;
@@ -1700,7 +1719,7 @@ push_to_cap_buffers_queue(struct gst_backend_priv *priv, GstBuffer *buffer)
 }
 
 static int
-qbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
+qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
 	struct v4l_gst_buffer *buffer;
 
@@ -1740,9 +1759,8 @@ qbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 }
 
 int
-qbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
+qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_TRACE("VIDIOC_QBUF: type: %s (0x%x) index: %d flags: 0x%x",
@@ -1782,7 +1800,7 @@ calc_plane_size(GstVideoInfo *info, GstVideoMeta *meta, gint index)
 }
 
 static void
-set_v4l2_buffer_plane_params(struct gst_backend_priv *priv,
+set_v4l2_buffer_plane_params(struct v4l_gst *priv,
 			     struct v4l_gst_buffer *buffers, guint n_planes,
 			     guint bytesused[], struct timeval *timestamp,
 			     struct v4l2_buffer *buf)
@@ -1806,7 +1824,7 @@ set_v4l2_buffer_plane_params(struct gst_backend_priv *priv,
 }
 
 static int
-fill_v4l2_buffer(struct gst_backend_priv *priv, GstBufferPool *pool,
+fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 		 struct v4l_gst_buffer *buffers, gint buffers_num,
 		 guint bytesused[], struct timeval *timestamp,
 		 struct v4l2_buffer *buf)
@@ -1828,7 +1846,7 @@ fill_v4l2_buffer(struct gst_backend_priv *priv, GstBufferPool *pool,
 		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
 		buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
-		clear_event(priv->dev_ops_priv->event_state, POLLOUT);
+		clear_event(priv->event_state, POLLOUT);
 	}
 
 	/* set unused params */
@@ -1859,7 +1877,7 @@ get_v4l2_buffer_index(struct v4l_gst_buffer *buffers, gint buffers_num,
 }
 
 static GstBuffer *
-dequeue_blocking(struct gst_backend_priv *priv, GQueue *queue, GCond *cond)
+dequeue_blocking(struct v4l_gst *priv, GQueue *queue, GCond *cond)
 {
 	GstBuffer *buffer;
 
@@ -1888,14 +1906,14 @@ dequeue_non_blocking(GQueue *queue)
 }
 
 static GstBuffer *
-dequeue_buffer(struct gst_backend_priv *priv, GQueue *queue, GCond *cond,
+dequeue_buffer(struct v4l_gst *priv, GQueue *queue, GCond *cond,
 		int type)
 {
 	GstBuffer *buffer = NULL;
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	if (priv->dev_ops_priv->is_non_blocking)
+	if (priv->is_non_blocking)
 		buffer = dequeue_non_blocking(queue);
 	else
 		buffer = dequeue_blocking(priv, queue, cond);
@@ -1905,13 +1923,13 @@ dequeue_buffer(struct gst_backend_priv *priv, GQueue *queue, GCond *cond,
 
 	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		if (priv->returned_out_buffers_num == 0)
-			clear_event(priv->dev_ops_priv->event_state, POLLIN);
+			clear_event(priv->event_state, POLLIN);
 	} else if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		guint len = g_queue_get_length(priv->cap_buffers_queue);
 
 		/* cache 1 buffer to detect EOS */
 		if ((priv->eos_state != EOS_GOT && len == 1) || len == 0) {
-			clear_event(priv->dev_ops_priv->event_state, POLLOUT);
+			clear_event(priv->event_state, POLLOUT);
 		}
 	}
 
@@ -1922,22 +1940,22 @@ dequeue_buffer(struct gst_backend_priv *priv, GQueue *queue, GCond *cond,
 }
 
 static GstBuffer *
-acquire_buffer_from_pool(struct gst_backend_priv *priv, GstBufferPool *pool)
+acquire_buffer_from_pool(struct v4l_gst *priv, GstBufferPool *pool)
 {
 	GstFlowReturn flow_ret;
 	GstBuffer *buffer;
 	GstBufferPoolAcquireParams params = { 0, };
 
-	if (priv->dev_ops_priv->is_non_blocking) {
+	if (priv->is_non_blocking) {
 		params.flags |= GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
 	} else
 		g_mutex_unlock(&priv->queue_mutex);
 
 	flow_ret = gst_buffer_pool_acquire_buffer(pool, &buffer, &params);
-	if (!priv->dev_ops_priv->is_non_blocking)
+	if (!priv->is_non_blocking)
 		g_mutex_lock(&priv->queue_mutex);
 
-	if (priv->dev_ops_priv->is_non_blocking && flow_ret == GST_FLOW_EOS) {
+	if (priv->is_non_blocking && flow_ret == GST_FLOW_EOS) {
 		GST_TRACE("The buffer pool is empty in "
 			  "the non-blocking mode, return EAGAIN");
 		errno = EAGAIN;
@@ -1952,7 +1970,7 @@ acquire_buffer_from_pool(struct gst_backend_priv *priv, GstBufferPool *pool)
 }
 
 static int
-dqbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
+dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
 	GstBuffer *buffer;
 	guint index;
@@ -1978,7 +1996,7 @@ dqbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 	priv->returned_out_buffers_num--;
 
 	if (priv->returned_out_buffers_num == 0) {
-		clear_event(priv->dev_ops_priv->event_state, POLLIN);
+		clear_event(priv->event_state, POLLIN);
 	}
 
 
@@ -2004,7 +2022,7 @@ dqbuf_ioctl_out(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 }
 
 static int
-dqbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
+dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
 	GstBuffer *buffer;
 	guint index;
@@ -2057,9 +2075,8 @@ dqbuf_ioctl_cap(struct gst_backend_priv *priv, struct v4l2_buffer *buf)
 }
 
 int
-dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
+dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_TRACE("VIDIOC_DQBUF: type: %s (0x%x) index: %d flags: 0x%x",
@@ -2095,9 +2112,8 @@ dqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
 }
 
 int
-querybuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_buffer *buf)
+querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	struct v4l_gst_buffer *buffers;
 	gint buffers_num;
 	GstBufferPool *pool;
@@ -2192,7 +2208,7 @@ set_mem_offset(struct v4l_gst_buffer *buffer, GstBufferPool *pool, gsize offset)
 }
 
 static guint
-alloc_buffers_from_pool(struct gst_backend_priv *priv, GstBufferPool *pool,
+alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 			struct v4l_gst_buffer **buffers)
 {
 	GstBufferPoolAcquireParams params = { 0, };
@@ -2301,16 +2317,16 @@ force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
 }
 
 static int
-force_out_dqbuf(struct gst_backend_priv *priv)
+force_out_dqbuf(struct v4l_gst *priv)
 {
 	g_mutex_lock(&priv->queue_mutex);
 
 	while (force_dqbuf_from_pool(priv->src_pool, priv->out_buffers,
-			   priv->out_buffers_num, true, NULL) == GST_FLOW_OK) {
+			   priv->out_buffers_num, TRUE, NULL) == GST_FLOW_OK) {
 		priv->returned_out_buffers_num--;
 	}
 
-	clear_event(priv->dev_ops_priv->event_state, POLLIN);
+	clear_event(priv->event_state, POLLIN);
 
 	g_mutex_unlock(&priv->queue_mutex);
 
@@ -2320,7 +2336,7 @@ force_out_dqbuf(struct gst_backend_priv *priv)
 }
 
 static int
-force_cap_dqbuf(struct gst_backend_priv *priv)
+force_cap_dqbuf(struct v4l_gst *priv)
 {
 	GstBuffer *buffer;
 	guint index;
@@ -2349,7 +2365,7 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 		GST_DEBUG("CAPTURE buffer %u is forcedly dequeued", index);
 	} while (buffer);
 
-	clear_event(priv->dev_ops_priv->event_state, POLLOUT);
+	clear_event(priv->event_state, POLLOUT);
 
 	for (index = 0; index < priv->cap_buffers_num; index++) {
 		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED)
@@ -2362,14 +2378,14 @@ force_cap_dqbuf(struct gst_backend_priv *priv)
 }
 
 static int
-flush_pipeline(struct gst_backend_priv *priv)
+flush_pipeline(struct v4l_gst *priv)
 {
 	GstEvent *event;
 
 	GST_DEBUG("flush start");
 
-	gst_buffer_pool_set_flushing(priv->src_pool, true);
-	gst_buffer_pool_set_flushing(priv->sink_pool, true);
+	gst_buffer_pool_set_flushing(priv->src_pool, TRUE);
+	gst_buffer_pool_set_flushing(priv->sink_pool, TRUE);
 
 	event = gst_event_new_flush_start();
 	if (!gst_element_send_event(priv->pipeline, event)) {
@@ -2387,8 +2403,8 @@ flush_pipeline(struct gst_backend_priv *priv)
 		return -1;
 	}
 
-	gst_buffer_pool_set_flushing(priv->src_pool, false);
-	gst_buffer_pool_set_flushing(priv->sink_pool, false);
+	gst_buffer_pool_set_flushing(priv->src_pool, FALSE);
+	gst_buffer_pool_set_flushing(priv->sink_pool, FALSE);
 
 	GST_DEBUG("flush end");
 
@@ -2396,7 +2412,7 @@ flush_pipeline(struct gst_backend_priv *priv)
 }
 
 static int
-streamoff_ioctl_out(struct gst_backend_priv *priv, gboolean steal_ref)
+streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 {
 	int ret;
 
@@ -2449,7 +2465,7 @@ flush_buffer_queues:
 }
 
 static int
-reqbuf_ioctl_out(struct gst_backend_priv *priv,
+reqbuf_ioctl_out(struct v4l_gst *priv,
 		 struct v4l2_requestbuffers *req)
 {
 	GstCaps *caps;
@@ -2559,7 +2575,7 @@ unlock:
 }
 
 static GstBuffer *
-peek_first_cap_buffer(struct gst_backend_priv *priv)
+peek_first_cap_buffer(struct v4l_gst *priv)
 {
 	GstBuffer *buffer;
 
@@ -2575,7 +2591,7 @@ peek_first_cap_buffer(struct gst_backend_priv *priv)
 }
 
 static void
-wait_for_all_bufs_collected(struct gst_backend_priv *priv,
+wait_for_all_bufs_collected(struct v4l_gst *priv,
 			    guint max_buffers)
 {
 	g_mutex_lock(&priv->queue_mutex);
@@ -2608,7 +2624,7 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *buffer,
 }
 
 static guint
-create_cap_buffers_list(struct gst_backend_priv *priv)
+create_cap_buffers_list(struct v4l_gst *priv)
 {
 	GstBuffer *first_buffer;
 	guint actual_max_buffers;
@@ -2699,7 +2715,7 @@ create_cap_buffers_list(struct gst_backend_priv *priv)
 }
 
 static int
-reqbuf_ioctl_cap(struct gst_backend_priv *priv,
+reqbuf_ioctl_cap(struct v4l_gst *priv,
 		 struct v4l2_requestbuffers *req)
 {
 	guint buffers_num;
@@ -2796,9 +2812,8 @@ unlock:
 }
 
 int
-reqbuf_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_requestbuffers *req)
+reqbuf_ioctl(struct v4l_gst *priv, struct v4l2_requestbuffers *req)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_DEBUG("VIDIOC_REQBUF: type: %s (0x%x) count: %d memory: 0x%x",
@@ -2827,7 +2842,7 @@ relink_elements_with_caps_filtered(GstElement *src_elem, GstElement *dest_elem,
 }
 
 static gboolean
-set_out_format_to_pipeline(struct gst_backend_priv *priv)
+set_out_format_to_pipeline(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 
@@ -2844,7 +2859,7 @@ set_out_format_to_pipeline(struct gst_backend_priv *priv)
 }
 
 static gboolean
-set_cap_format_to_pipeline(struct gst_backend_priv *priv)
+set_cap_format_to_pipeline(struct v4l_gst *priv)
 {
 	GstElement *peer_elem;
 	GstCaps *caps;
@@ -2886,7 +2901,7 @@ free_objects:
 }
 
 static int
-streamon_ioctl_out(struct gst_backend_priv *priv)
+streamon_ioctl_out(struct v4l_gst *priv)
 {
 	GstState state;
 
@@ -2936,9 +2951,8 @@ streamon_ioctl_out(struct gst_backend_priv *priv)
 }
 
 int
-streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
+streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_DEBUG("VIDIOC_STREAMON: type: %s (0x%x)",
@@ -2959,9 +2973,8 @@ streamon_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 }
 
 int
-streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
+streamoff_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret;
 
 	GST_DEBUG("VIDIOC_STREAMOFF: type: %s (0x%x)",
@@ -2988,14 +3001,13 @@ streamoff_ioctl(struct v4l_gst_priv *dev_ops_priv, enum v4l2_buf_type *type)
 }
 
 int
-subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
+subscribe_event_ioctl(struct v4l_gst *priv,
 		      struct v4l2_event_subscription *subscription)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int retval = -1;
 
 	errno = EINVAL;
-	g_return_val_if_fail(dev_ops_priv && priv, retval);
+	g_return_val_if_fail(priv, retval);
 	g_return_val_if_fail(subscription, retval);
 
 	g_mutex_lock(&priv->dev_lock);
@@ -3025,9 +3037,8 @@ subscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 }
 
 int
-dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
+dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int retval = -1;
 
 	GST_TRACE("VIDIOC_DQEVENT");
@@ -3069,9 +3080,8 @@ dqevent_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_event *ev)
 }
 
 static int
-find_out_buffer_by_offset(struct v4l_gst_priv *dev_ops_priv, int64_t offset)
+find_out_buffer_by_offset(struct v4l_gst *priv, int64_t offset)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	gint index = -1;
 	gint i;
 
@@ -3086,9 +3096,8 @@ find_out_buffer_by_offset(struct v4l_gst_priv *dev_ops_priv, int64_t offset)
 }
 
 static void *
-map_out_buffer(struct v4l_gst_priv *dev_ops_priv, int index, int prot)
+map_out_buffer(struct v4l_gst *priv, int index, int prot)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	GstMapInfo info;
 	void *data;
 	GstMapFlags map_flags;
@@ -3114,10 +3123,9 @@ map_out_buffer(struct v4l_gst_priv *dev_ops_priv, int index, int prot)
 }
 
 static int
-find_cap_buffer_by_offset(struct v4l_gst_priv *dev_ops_priv, int64_t offset,
-			  int *index, int *plane)
+find_cap_buffer_by_offset(struct v4l_gst *priv,
+			  int64_t offset, int *index, int *plane)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	gint i, j;
 
 	for (i = 0; i < priv->cap_buffers_num; i++) {
@@ -3135,10 +3143,9 @@ find_cap_buffer_by_offset(struct v4l_gst_priv *dev_ops_priv, int64_t offset,
 }
 
 static void *
-map_cap_buffer(struct v4l_gst_priv *dev_ops_priv, int index, int plane,
+map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 	       int prot)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	GstVideoMeta *meta;
 	GstMapInfo info;
 	void *data;
@@ -3175,10 +3182,9 @@ map_cap_buffer(struct v4l_gst_priv *dev_ops_priv, int index, int plane,
 }
 
 void *
-gst_backend_mmap(struct v4l_gst_priv *dev_ops_priv, void *start, size_t length,
+gst_backend_mmap(struct v4l_gst *priv, void *start, size_t length,
 		 int prot, int flags, int fd, int64_t offset)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int index;
 	int plane;
 	void *map = MAP_FAILED;
@@ -3196,15 +3202,15 @@ gst_backend_mmap(struct v4l_gst_priv *dev_ops_priv, void *start, size_t length,
 
 	g_mutex_lock(&priv->dev_lock);
 
-	index = find_out_buffer_by_offset(dev_ops_priv, offset);
+	index = find_out_buffer_by_offset(priv, offset);
 	if (index >= 0) {
-		map = map_out_buffer(dev_ops_priv, index, prot);
+		map = map_out_buffer(priv, index, prot);
 		goto unlock;
 	}
 
-	ret = find_cap_buffer_by_offset(dev_ops_priv, offset, &index, &plane);
+	ret = find_cap_buffer_by_offset(priv, offset, &index, &plane);
 	if (ret == 0) {
-		map = map_cap_buffer(dev_ops_priv, index, plane, prot);
+		map = map_cap_buffer(priv, index, plane, prot);
 		goto unlock;
 	}
 
@@ -3217,11 +3223,9 @@ unlock:
 }
 
 int
-expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
-	     struct v4l2_exportbuffer *expbuf)
+expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 {
 	struct v4l_gst_buffer *buffer;
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	guint i = 0;
 	GstMemory *mem = NULL;
 
@@ -3277,11 +3281,8 @@ expbuf_ioctl(struct v4l_gst_priv *dev_ops_priv,
 }
 
 int
-g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv,
-		  struct v4l2_selection *selection)
+g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
-
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_SELECTION")) {
@@ -3303,8 +3304,7 @@ g_selection_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
 int
-queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
-		struct v4l2_queryctrl *query_ctrl)
+queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 {
 
 #ifdef ENABLE_VIDIOC_DEBUG
@@ -3318,7 +3318,6 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 	}
 #endif
 
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	GST_INFO("unsupported VIDIOC_QUERYCTRL id: 0x%x", query_ctrl->id);
 
 	switch (query_ctrl->id) {
@@ -3367,7 +3366,7 @@ queryctrl_ioctl(struct v4l_gst_priv *dev_ops_priv,
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L778-L842 */
 int
-querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_menu)
+querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 {
 
 #ifdef ENABLE_VIDIOC_DEBUG
@@ -3452,7 +3451,7 @@ querymenu_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_querymenu *query_
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
 int
-try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
+try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3470,7 +3469,7 @@ try_fmt_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_format *format)
 }
 
 int
-g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
+g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
 {
 	const gchar *buf_type;
 #ifdef ENABLE_VIDIOC_DEBUG
@@ -3500,7 +3499,7 @@ g_crop_ioctl(struct v4l_gst_priv *dev_ops_priv, struct v4l2_crop *crop)
 
 #if 0
 static int
-set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
+set_decoder_cmd_state(struct v4l_gst *priv, GstState state)
 {
 	int ret = 0;
 	GstStateChangeReturn state_ret;
@@ -3536,7 +3535,7 @@ set_decoder_cmd_state(struct gst_backend_priv *priv, GstState state)
 #endif
 
 int
-try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
+try_decoder_cmd_ioctl(struct v4l_gst *priv,
 		      struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
@@ -3588,10 +3587,9 @@ try_decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
 }
 
 int
-unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
+unsubscribe_event_ioctl(struct v4l_gst *priv,
 			struct v4l2_event_subscription *subscription)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int retval = 0;
 
 	GST_INFO("VIDIOC_UNSUBSCRIBE_EVENT: type: 0x%x id: 0x%x flags: 0x%x",
@@ -3626,10 +3624,8 @@ unsubscribe_event_ioctl(struct v4l_gst_priv *dev_ops_priv,
 }
 
 int
-decoder_cmd_ioctl(struct v4l_gst_priv *dev_ops_priv,
-		  struct v4l2_decoder_cmd *decoder_cmd)
+decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
-	struct gst_backend_priv *priv = dev_ops_priv->gst_priv;
 	int ret = 0;
 
 	g_mutex_lock(&priv->dev_lock);

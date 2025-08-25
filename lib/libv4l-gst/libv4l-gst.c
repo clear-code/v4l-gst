@@ -18,19 +18,10 @@
  */
 
 #include <config.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/eventfd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 
 #include "libv4l-plugin.h"
 
-#include "libv4l-gst.h"
 #include "gst-backend.h"
-#include "evfd-ctrl.h"
 #include "debug.h"
 
 #if HAVE_VISIBILITY
@@ -41,82 +32,31 @@
 
 static void *plugin_init(int fd)
 {
-	struct v4l_gst_priv *priv;
-	struct stat buf;
-	int flags;
-	int ret;
-
-	/* Reject character device */
-	fstat(fd, &buf);
-	if (S_ISCHR(buf.st_mode))
-		return NULL;
-
-	DBG_LOG("start plugin_init\n");
-
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
+
 	if (vidioc_features) {
 		DBG_LOG("DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
 	}
 	fprintf(stderr, "DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
 #endif
-
-	priv = calloc(1, sizeof(*priv));
-	if (!priv) {
-		perror("Couldn't allocate memory for plugin");
-		return NULL;
-	}
-
-	flags = fcntl(fd, F_GETFL);
-	priv->is_non_blocking = (flags & O_NONBLOCK) ? true : false;
-	DBG_LOG("non-blocking : %s\n", (priv->is_non_blocking) ? "on" : "off");
-
-	/*For handling event state */
-	priv->event_state = new_event_state();
-	if (!priv->event_state)
-		goto free_priv;
-
-	if (dup2(event_state_fd(priv->event_state), fd) < 0) {
-		fprintf(stderr, "dup2 failed\n");
-		goto free_event;
-	}
-
-	priv->plugin_fd = fd;
-
-	ret = gst_backend_init(priv);
-	if (ret < 0)
-		goto free_event;
-
-	DBG_LOG("plugin_init finished\n");
-
-	return priv;
-free_event:
-	delete_event_state(priv->event_state);
-
-free_priv:
-	free(priv);
-
-	return NULL;
+	return gst_backend_init(fd);
 }
 
 static void plugin_close(void *dev_ops_priv)
 {
-	struct v4l_gst_priv *priv = dev_ops_priv;
+	struct v4l_gst *priv = dev_ops_priv;
 
 	if (!priv)
 		return;
 
 	gst_backend_deinit(priv);
-
-	delete_event_state(priv->event_state);
-
-	free(dev_ops_priv);
 }
 
 static int plugin_ioctl(void *dev_ops_priv, int fd,
 			unsigned long int cmd, void *arg)
 {
-	struct v4l_gst_priv *priv = dev_ops_priv;
+	struct v4l_gst *priv = dev_ops_priv;
 	int ret = -1;
 
 	(void)fd; /* unused */
@@ -207,7 +147,8 @@ static void *
 plugin_mmap(void *dev_ops_priv, void *start, size_t length, int prot,
 	    int flags, int fd, int64_t offset)
 {
-	return gst_backend_mmap(dev_ops_priv, start, length, prot, flags, fd,
+	struct v4l_gst *priv = dev_ops_priv;
+	return gst_backend_mmap(priv, start, length, prot, flags, fd,
 				offset);
 }
 
