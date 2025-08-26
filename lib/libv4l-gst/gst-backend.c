@@ -1604,11 +1604,8 @@ static void
 notify_unref(gpointer data)
 {
 	struct v4l_gst_buffer *buffer = data;
-	struct v4l_gst *priv;
 
-	priv = buffer->priv;
-
-	release_out_buffer(priv, buffer->gstbuf);
+	release_out_buffer(buffer->priv, buffer->gstbuf);
 }
 
 static int
