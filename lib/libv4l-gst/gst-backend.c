@@ -902,13 +902,25 @@ free_pool:
 struct v4l_gst*
 gst_backend_init(int fd)
 {
+	static gboolean gstreamer_initialized = FALSE;
 	struct v4l_gst *priv;
 	struct stat buf;
 	int flags;
 
-	priv = calloc(1, sizeof(*priv));
+	if (!gstreamer_initialized) {
+		gst_init(NULL, NULL);
+		GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
+					"v4l-gst", 0,
+					"debug category for v4l-gst application");
+		GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
+					"v4l-gst-ioctl", 0,
+					"debug category for v4l-gst IOCTL operation");
+		gstreamer_initialized = TRUE;
+	}
+
+	priv = g_new0(struct v4l_gst, 1);
 	if (!priv) {
-		perror("Couldn't allocate memory for gst-backend");
+		GST_ERROR("Couldn't allocate memory for gst-backend");
 		return NULL;
 	}
 
@@ -932,14 +944,6 @@ gst_backend_init(int fd)
 	}
 
 	priv->plugin_fd = fd;
-
-	gst_init(NULL, NULL);
-	GST_DEBUG_CATEGORY_INIT(v4l_gst_debug_category,
-				"v4l-gst", 0,
-				"debug category for v4l-gst application");
-	GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
-				"v4l-gst-ioctl", 0,
-				"debug category for v4l-gst IOCTL operation");
 
 	if (!parse_config_file(priv)) {
 		GST_ERROR("pipeline configuration is not found at all");
