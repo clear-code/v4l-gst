@@ -108,8 +108,8 @@ struct v4l_gst {
 
 	int64_t mmap_offset;
 
-	GQueue *reqbufs_queue;     /* GStBuffer */
-	GQueue *cap_buffers_queue; /* GstBuffer */
+	GQueue *req_gstbufs_queue; /* GstBuffer */
+	GQueue *cap_gstbufs_queue; /* GstBuffer */
 	GMutex queue_mutex;
 	GCond queue_cond;
 
@@ -795,8 +795,8 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 		release_out_buffer(priv, priv->eos_gstbuf);
 	priv->eos_state = EOS_GOT;
 	g_mutex_lock(&priv->queue_mutex);
-	if (priv->cap_buffers_queue &&
-	    !g_queue_is_empty(priv->cap_buffers_queue)) {
+	if (priv->cap_gstbufs_queue &&
+	    !g_queue_is_empty(priv->cap_gstbufs_queue)) {
 	    set_event(priv->event_state, POLLOUT);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
@@ -816,9 +816,9 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 	GST_TRACE("pull buffer: %p", gstbuf);
 
 	if (priv->cap_buffers)
-		queue = priv->cap_buffers_queue;
+		queue = priv->cap_gstbufs_queue;
 	else
-		queue = priv->reqbufs_queue;
+		queue = priv->req_gstbufs_queue;
 
 	g_mutex_lock(&priv->queue_mutex);
 
@@ -852,8 +852,8 @@ init_app_elements(struct v4l_gst *priv)
 		return FALSE;
 
 	/* For queuing buffers received from appsink */
-	priv->cap_buffers_queue = g_queue_new();
-	priv->reqbufs_queue = g_queue_new();
+	priv->cap_gstbufs_queue = g_queue_new();
+	priv->req_gstbufs_queue = g_queue_new();
 
 	/* Set the appsrc queue size to unlimited.
 	   The amount of buffers is managed by the buffer pool. */
@@ -1028,10 +1028,10 @@ gst_backend_deinit(struct v4l_gst *priv)
 	if (priv->supported_cap_fmts)
 		g_array_free(priv->supported_cap_fmts, TRUE);
 
-	if (priv->cap_buffers_queue)
-		g_queue_free(priv->cap_buffers_queue);
-	if (priv->reqbufs_queue)
-		g_queue_free(priv->reqbufs_queue);
+	if (priv->cap_gstbufs_queue)
+		g_queue_free(priv->cap_gstbufs_queue);
+	if (priv->req_gstbufs_queue)
+		g_queue_free(priv->req_gstbufs_queue);
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
@@ -1179,13 +1179,13 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 	return 0;
 
 error:
-	if (priv->cap_buffers_queue) {
-		g_queue_free(priv->cap_buffers_queue);
-		priv->cap_buffers_queue = NULL;
+	if (priv->cap_gstbufs_queue) {
+		g_queue_free(priv->cap_gstbufs_queue);
+		priv->cap_gstbufs_queue = NULL;
 	}
-	if (priv->reqbufs_queue) {
-		g_queue_free(priv->reqbufs_queue);
-		priv->reqbufs_queue = NULL;
+	if (priv->req_gstbufs_queue) {
+		g_queue_free(priv->req_gstbufs_queue);
+		priv->req_gstbufs_queue = NULL;
 	}
 	if (priv->pipeline) {
 		gst_object_unref(priv->pipeline);
@@ -1687,26 +1687,26 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 }
 
 static gboolean
-push_to_cap_buffers_queue(struct v4l_gst *priv, GstBuffer *gstbuf)
+push_to_cap_gstbufs_queue(struct v4l_gst *priv, GstBuffer *gstbuf)
 {
 	gboolean is_empty;
 	gint index;
 
-	index = g_queue_index(priv->reqbufs_queue, gstbuf);
+	index = g_queue_index(priv->req_gstbufs_queue, gstbuf);
 	if (index < 0)
 		return FALSE;
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	is_empty = g_queue_is_empty(priv->cap_buffers_queue);
-	g_queue_push_tail(priv->cap_buffers_queue, gstbuf);
+	is_empty = g_queue_is_empty(priv->cap_gstbufs_queue);
+	g_queue_push_tail(priv->cap_gstbufs_queue, gstbuf);
 
 	if (is_empty)
 		g_cond_signal(&priv->queue_cond);
 
 	g_mutex_unlock(&priv->queue_mutex);
 
-	g_queue_pop_nth_link(priv->reqbufs_queue, index);
+	g_queue_pop_nth_link(priv->req_gstbufs_queue, index);
 
 	return TRUE;
 }
@@ -1731,13 +1731,13 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	gst_buffer_unmap(buffer->gstbuf, &buffer->info);
 	memset(&buffer->info, 0, sizeof(buffer->info));
 
-	/* The buffers in reqbufs_queue, which are pushed by the REQBUF ioctl
+	/* The buffers in req_gstbufs_queue, which are pushed by the REQBUF ioctl
 	   on CAPTURE, have already contained decoded frames.
 	   They should not back to the buffer pool and prepare to be
 	   dequeued as they are. */
-	if (g_queue_get_length(priv->reqbufs_queue) > 0) {
-		GST_TRACE("push_to_cap_buffers_queue index=%d", v4l2buf->index);
-		if (push_to_cap_buffers_queue(priv, buffer->gstbuf)) {
+	if (g_queue_get_length(priv->req_gstbufs_queue) > 0) {
+		GST_TRACE("push_to_cap_gstbufs_queue index=%d", v4l2buf->index);
+		if (push_to_cap_gstbufs_queue(priv, buffer->gstbuf)) {
 			buffer->state =V4L_GST_BUFFER_QUEUED;
 			return 0;
 		}
@@ -1835,7 +1835,7 @@ fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 	v4l2buf->flags = 0;
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    priv->eos_state == EOS_GOT &&
-	    g_queue_is_empty(priv->cap_buffers_queue)) {
+	    g_queue_is_empty(priv->cap_gstbufs_queue)) {
 		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
 		v4l2buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
@@ -1918,7 +1918,7 @@ dequeue_buffer(struct v4l_gst *priv, GQueue *queue, GCond *cond,
 		if (priv->returned_out_buffers_num == 0)
 			clear_event(priv->event_state, POLLIN);
 	} else if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		guint len = g_queue_get_length(priv->cap_buffers_queue);
+		guint len = g_queue_get_length(priv->cap_gstbufs_queue);
 
 		/* cache 1 buffer to detect EOS */
 		if ((priv->eos_state != EOS_GOT && len == 1) || len == 0) {
@@ -2027,7 +2027,7 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 					priv->sink_pool))
 		return -1;
 
-	gstbuf = dequeue_buffer(priv, priv->cap_buffers_queue,
+	gstbuf = dequeue_buffer(priv, priv->cap_gstbufs_queue,
 				&priv->queue_cond, v4l2buf->type);
 	if (!gstbuf)
 		return -1;
@@ -2328,7 +2328,7 @@ force_cap_dqbuf(struct v4l_gst *priv)
 
 	do {
 		g_mutex_lock(&priv->queue_mutex);
-		gstbuf = dequeue_non_blocking(priv->cap_buffers_queue);
+		gstbuf = dequeue_non_blocking(priv->cap_gstbufs_queue);
 		 /* This function may set errno but not need to expose it to
 		    clients in this case */
 		errno = 0;
@@ -2565,10 +2565,10 @@ peek_first_cap_buffer(struct v4l_gst *priv)
 	GstBuffer *gstbuf;
 
 	g_mutex_lock(&priv->queue_mutex);
-	gstbuf = g_queue_peek_head(priv->reqbufs_queue);
+	gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
 	while (!gstbuf) {
 		g_cond_wait(&priv->queue_cond, &priv->queue_mutex);
-		gstbuf = g_queue_peek_head(priv->reqbufs_queue);
+		gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
 
@@ -2580,7 +2580,7 @@ wait_for_all_bufs_collected(struct v4l_gst *priv,
 			    guint max_buffers)
 {
 	g_mutex_lock(&priv->queue_mutex);
-	while (g_queue_get_length(priv->reqbufs_queue) <
+	while (g_queue_get_length(priv->req_gstbufs_queue) <
 	       max_buffers)
 		g_cond_wait(&priv->queue_cond, &priv->queue_mutex);
 	g_mutex_unlock(&priv->queue_mutex);
@@ -2669,7 +2669,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 
 	for (i = 0; i < actual_max_buffers; i++) {
 		priv->cap_buffers[i].gstbuf =
-				g_queue_peek_nth(priv->reqbufs_queue, i);
+				g_queue_peek_nth(priv->req_gstbufs_queue, i);
 
 		/* Set identifiers for associating a GstBuffer with
 		   a V4L2 buffer in the V4L2 caller side. */
@@ -2746,8 +2746,8 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 			}
 		}
 
-		g_queue_clear(priv->reqbufs_queue);
-		g_queue_clear(priv->cap_buffers_queue);
+		g_queue_clear(priv->req_gstbufs_queue);
+		g_queue_clear(priv->cap_gstbufs_queue);
 
 		g_mutex_lock(&priv->queue_mutex);
 		priv->is_pipeline_started = FALSE;
