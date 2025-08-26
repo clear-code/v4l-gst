@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
+
+#include <glib.h>
 
 #include "evfd-ctrl.h"
 #include "debug.h"

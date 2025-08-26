@@ -17,9 +17,10 @@
  * Foundation, Inc., 51 Franklin Street, Suite 500, Boston, MA  02110-1335  USA
  */
 
-#include <config.h>
+#include "config.h"
 
-#include "libv4l-plugin.h"
+#include <errno.h>
+#include <libv4l-plugin.h>
 
 #include "gst-backend.h"
 #include "debug.h"

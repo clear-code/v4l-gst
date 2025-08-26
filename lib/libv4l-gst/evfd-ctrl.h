@@ -19,10 +19,6 @@
 #ifndef __EVFD_CTRL_H__
 #define __EVFD_CTRL_H__
 
-#include <sys/eventfd.h>
-#include <stdint.h> /* uint32_t */
-#include <glib.h>
-
 struct event_state;
 
 struct event_state * new_event_state();

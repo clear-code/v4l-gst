@@ -17,7 +17,8 @@
  * Foundation, Inc., 51 Franklin Street, Suite 500, Boston, MA  02110-1335  USA
  */
 
-#include <config.h>
+#include "config.h"
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,11 @@
 #include <sys/eventfd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#include <gst/video/video.h>
+#include <gst/app/gstappsrc.h>
+#include <gst/app/gstappsink.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include "libv4l-gst-bufferpool.h"
 
