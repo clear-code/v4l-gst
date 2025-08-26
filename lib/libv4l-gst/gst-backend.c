@@ -62,11 +62,8 @@ struct v4l_gst_buffer {
 	GstBuffer *gstbuf;
 	GstMapInfo info;
 	GstMapFlags flags;
-
 	struct v4l2_plane planes[GST_VIDEO_MAX_PLANES];
-
 	struct v4l_gst *priv;
-
 	enum buffer_state state;
 };
 
@@ -95,12 +92,10 @@ struct v4l_gst {
 	void *pool_lib_handle;
 	struct libv4l_gst_buffer_pool_ops *pool_ops;
 
-	GArray *out_fmts; /* struct fmt */
-	GArray *cap_fmts; /* struct fmt */
-
-	guint out_fourcc;
-	gsize out_buf_size;
-	struct v4l2_pix_format_mplane cap_pix_fmt;
+	GArray *supported_out_fmts; /* struct fmt */
+	GArray *supported_cap_fmts; /* struct fmt */
+	struct v4l2_pix_format_mplane out_fmt;
+	struct v4l2_pix_format_mplane cap_fmt;
 
 	GstBufferPool *src_pool;
 	GstBufferPool *sink_pool;
@@ -427,17 +422,17 @@ fill_config_video_format_out(struct v4l_gst *priv)
 {
 	struct fmt fmt;
 
-	g_array_set_size(priv->out_fmts, 0);
+	g_array_set_size(priv->supported_out_fmts, 0);
 
 	if (priv->config.h264_pipeline) {
 		fmt.fourcc = V4L2_PIX_FMT_H264;
 		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->out_fmts, &fmt, 1);
+		g_array_append_vals(priv->supported_out_fmts, &fmt, 1);
 	}
 	if (priv->config.hevc_pipeline) {
 		fmt.fourcc = V4L2_PIX_FMT_HEVC;
 		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->out_fmts, &fmt, 1);
+		g_array_append_vals(priv->supported_out_fmts, &fmt, 1);
 	}
 	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
 		GST_DEBUG("out supported codecs : h264, hevc");
@@ -448,7 +443,7 @@ fill_config_video_format_out(struct v4l_gst *priv)
 	} else {
 		GST_DEBUG("out supported codecs : nothing");
 	}
-	return priv->out_fmts->len > 0;
+	return priv->supported_out_fmts->len > 0;
 }
 
 static gboolean
@@ -472,13 +467,13 @@ get_supported_video_format_out(struct v4l_gst *priv)
 	} else {
 		GST_ERROR("Unsupported codec : %s", mime);
 		gst_caps_unref(caps);
-		g_array_set_size(priv->out_fmts, 0);
+		g_array_set_size(priv->supported_out_fmts, 0);
 		return FALSE;
 	}
 	GST_DEBUG("out supported codec : %s", mime);
 
-	g_array_set_size(priv->out_fmts, 1);
-	fmt = (struct fmt*)priv->out_fmts->data;
+	g_array_set_size(priv->supported_out_fmts, 1);
+	fmt = (struct fmt*)priv->supported_out_fmts->data;
 
 	fmt->fourcc = fourcc;
 	if(fourcc == V4L2_PIX_FMT_H264)
@@ -502,7 +497,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	guint i, j;
 	struct fmt color_fmt;
 
-	g_array_set_size(priv->cap_fmts, 0);
+	g_array_set_size(priv->supported_cap_fmts, 0);
 
 	caps = get_peer_pad_template_caps(priv->appsink, "sink");
 
@@ -550,33 +545,35 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 
 			g_strlcpy(color_fmt.desc, fmt_str, FMTDESC_NAME_LENGTH);
 
-			g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+			g_array_append_vals(priv->supported_cap_fmts, &color_fmt, 1);
 
 			/* Add legacy RGB formats */
 			if (color_fmt.fourcc == V4L2_PIX_FMT_ARGB32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_RGB32;
 				g_strlcpy(color_fmt.desc,
 					  "RGB4", FMTDESC_NAME_LENGTH);
-				g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+				g_array_append_vals(priv->supported_cap_fmts,
+						    &color_fmt, 1);
 			} else if (color_fmt.fourcc == V4L2_PIX_FMT_ABGR32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_BGR32;
 
 				g_strlcpy(color_fmt.desc,
 					  "BGR4", FMTDESC_NAME_LENGTH);
-				g_array_append_vals(priv->cap_fmts, &color_fmt, 1);
+				g_array_append_vals(priv->supported_cap_fmts,
+						    &color_fmt, 1);
 			}
 		}
 	}
 
 	gst_caps_unref(caps);
 
-	if (priv->cap_fmts->len == 0) {
+	if (priv->supported_cap_fmts->len == 0) {
 		GST_ERROR("Failed to get video formats from caps");
 		return FALSE;
 	}
 
 	GST_DEBUG("The total number of cap supported video format : %d",
-		  priv->cap_fmts->len);
+		  priv->supported_cap_fmts->len);
 
 
 	return TRUE;
@@ -647,17 +644,17 @@ retrieve_cap_format_info(struct v4l_gst *priv, GstVideoInfo *info)
 {
 	gint fourcc;
 
-	priv->cap_pix_fmt.width = info->width;
-	priv->cap_pix_fmt.height = info->height;
+	priv->cap_fmt.width = info->width;
+	priv->cap_fmt.height = info->height;
 
 	fourcc = fourcc_from_gst_video_format(info->finfo->format);
-	if (priv->cap_pix_fmt.pixelformat != 0 &&
-	    priv->cap_pix_fmt.pixelformat != fourcc) {
+	if (priv->cap_fmt.pixelformat != 0 &&
+	    priv->cap_fmt.pixelformat != fourcc) {
 		GST_WARNING("Unexpected cap video format");
 	}
-	priv->cap_pix_fmt.pixelformat = fourcc;
+	priv->cap_fmt.pixelformat = fourcc;
 
-	priv->cap_pix_fmt.num_planes = info->finfo->n_planes;
+	priv->cap_fmt.num_planes = info->finfo->n_planes;
 }
 
 static void
@@ -954,8 +951,8 @@ gst_backend_init(int fd)
 		goto error;
 	}
 
-	priv->out_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
-	priv->cap_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
+	priv->supported_out_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
+	priv->supported_cap_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 
 	if (!fill_config_video_format_out(priv)) {
 		GST_ERROR("Failed to fill in supported video format");
@@ -978,10 +975,10 @@ gst_backend_init(int fd)
 	return priv;
 
 error:
-	if (priv->out_fmts)
-		g_array_free(priv->out_fmts, TRUE);
-	if (priv->cap_fmts)
-		g_array_free(priv->cap_fmts, TRUE);
+	if (priv->supported_out_fmts)
+		g_array_free(priv->supported_out_fmts, TRUE);
+	if (priv->supported_cap_fmts)
+		g_array_free(priv->supported_cap_fmts, TRUE);
 	g_free(priv->config.h264_pipeline);
 	g_free(priv->config.hevc_pipeline);
 	g_free(priv->config.pool_lib_path);
@@ -1031,10 +1028,10 @@ gst_backend_deinit(struct v4l_gst *priv)
 	if (priv->sink_pool)
 		gst_object_unref(priv->sink_pool);
 
-	if (priv->out_fmts)
-		g_array_free(priv->out_fmts, TRUE);
-	if (priv->cap_fmts)
-		g_array_free(priv->cap_fmts, TRUE);
+	if (priv->supported_out_fmts)
+		g_array_free(priv->supported_out_fmts, TRUE);
+	if (priv->supported_cap_fmts)
+		g_array_free(priv->supported_cap_fmts, TRUE);
 
 	if (priv->cap_buffers_queue)
 		g_queue_free(priv->cap_buffers_queue);
@@ -1119,12 +1116,13 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 	gchar fourcc_str[5];
+	GArray *cap_fmts = priv->supported_cap_fmts;
 
 	pix_fmt = &fmt->fmt.pix_mp;
 	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->out_fmts->data,
-				  priv->out_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->supported_out_fmts->data,
+				  priv->supported_out_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
 			  fourcc_str, pix_fmt->pixelformat);
@@ -1139,14 +1137,14 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 	}
 
 	if (priv->pipeline) {
-		if (priv->out_fourcc == pix_fmt->pixelformat) {
+		if (priv->out_fmt.pixelformat == pix_fmt->pixelformat) {
 			GST_WARNING("Same pixelformat with current: %s",
 				    fourcc_str);
 			return 0;
 		} else {
 			gchar current[5];
 
-			fourcc_to_string(priv->out_fourcc, current);
+			fourcc_to_string(priv->out_fmt.pixelformat, current);
 			GST_ERROR("Different pixelformat with current: "
 				  "pixelformat:%s, current: %s",
 				  fourcc_str, current);
@@ -1175,14 +1173,13 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 	if (!init_buffer_pool(priv))
 		goto error;
 
-	priv->out_fourcc = pix_fmt->pixelformat;
-	priv->out_buf_size = pix_fmt->plane_fmt[0].sizeimage;
+	priv->out_fmt = *pix_fmt;
 
 	set_params_as_encoded_stream(pix_fmt);
 
-	if (!priv->cap_pix_fmt.pixelformat && priv->cap_fmts->len > 0)
-		priv->cap_pix_fmt.pixelformat
-			= ((struct fmt*)priv->cap_fmts->data)[0].fourcc;
+	if (!priv->cap_fmt.pixelformat && cap_fmts->len > 0)
+		priv->cap_fmt.pixelformat
+			= ((struct fmt*)cap_fmts->data)[0].fourcc;
 
 	return 0;
 
@@ -1221,8 +1218,8 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->cap_fmts->data,
-				  priv->cap_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->supported_cap_fmts->data,
+				  priv->supported_cap_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on CAPTURE");
 		errno = EINVAL;
@@ -1231,11 +1228,11 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
-		priv->cap_pix_fmt.pixelformat = pix_fmt->pixelformat;
+		priv->cap_fmt.pixelformat = pix_fmt->pixelformat;
 		init_decoded_frame_params(pix_fmt);
-	} else if (priv->cap_pix_fmt.width != pix_fmt->width ||
-		   priv->cap_pix_fmt.height != pix_fmt->height ||
-		   priv->cap_pix_fmt.pixelformat != pix_fmt->pixelformat) {
+	} else if (priv->cap_fmt.width != pix_fmt->width ||
+		   priv->cap_fmt.height != pix_fmt->height ||
+		   priv->cap_fmt.pixelformat != pix_fmt->pixelformat) {
 		/* TODO: Should check the pix_fmt more strictly. */
 		gchar fourcc_str[5];
 		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
@@ -1295,27 +1292,27 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 
 	GST_DEBUG("cap format is acquirable. out_cnt = %d",priv->out_cnt);
 
-	pix_fmt->width = priv->cap_pix_fmt.width;
-	pix_fmt->height = priv->cap_pix_fmt.height;
-	pix_fmt->pixelformat = priv->cap_pix_fmt.pixelformat;
+	pix_fmt->width = priv->cap_fmt.width;
+	pix_fmt->height = priv->cap_fmt.height;
+	pix_fmt->pixelformat = priv->cap_fmt.pixelformat;
 	pix_fmt->field = V4L2_FIELD_NONE;
 	pix_fmt->colorspace = 0;
 	pix_fmt->flags = 0;
-	pix_fmt->num_planes = priv->cap_pix_fmt.num_planes;
+	pix_fmt->num_planes = priv->cap_fmt.num_planes;
 
 	GST_DEBUG("width:%d height:%d num_plnaes=%d",
 		  pix_fmt->width, pix_fmt->height, pix_fmt->num_planes);
 
-	if (priv->cap_pix_fmt.plane_fmt[0].sizeimage > 0) {
+	if (priv->cap_fmt.plane_fmt[0].sizeimage > 0) {
 		for (i = 0; i < pix_fmt->num_planes; i++) {
 			pix_fmt->plane_fmt[i].sizeimage =
 					priv->
-					cap_pix_fmt.plane_fmt[i].sizeimage;
+					cap_fmt.plane_fmt[i].sizeimage;
 			pix_fmt->plane_fmt[i].bytesperline =
 					priv->
-					cap_pix_fmt.plane_fmt[i].bytesperline;
+					cap_fmt.plane_fmt[i].bytesperline;
 		}
-		pix_fmt->num_planes = priv->cap_pix_fmt.num_planes;
+		pix_fmt->num_planes = priv->cap_fmt.num_planes;
 	} else {
 		memset(pix_fmt->plane_fmt, 0, sizeof(pix_fmt->plane_fmt));
 	}
@@ -1336,8 +1333,7 @@ get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	if (fmt->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		g_mutex_lock(&priv->dev_lock);
-		pix_fmt->pixelformat = priv->out_fourcc;
-		pix_fmt->plane_fmt[0].sizeimage = priv->out_buf_size;
+		*pix_fmt = priv->out_fmt;
 		g_mutex_unlock(&priv->dev_lock);
 		set_params_as_encoded_stream(pix_fmt);
 		ret = 0;
@@ -1363,12 +1359,12 @@ enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		fmts = (struct fmt*)priv->out_fmts->data;
-		fmts_num = priv->out_fmts->len;
+		fmts = (struct fmt*)priv->supported_out_fmts->data;
+		fmts_num = priv->supported_out_fmts->len;
 		desc->flags = V4L2_FMT_FLAG_COMPRESSED;
 	} else if (desc->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		fmts = (struct fmt*)priv->cap_fmts->data;
-		fmts_num = priv->cap_fmts->len;
+		fmts = (struct fmt*)priv->supported_cap_fmts->data;
+		fmts_num = priv->supported_cap_fmts->len;
 		desc->flags = 0;
 	} else {
 		GST_ERROR("Invalid buf type");
@@ -2056,8 +2052,8 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	v4l2buf->index = index;
 
-	for (i = 0; i < priv->cap_pix_fmt.num_planes; i++)
-		bytesused[i] = priv->cap_pix_fmt.plane_fmt[i].sizeimage;
+	for (i = 0; i < priv->cap_fmt.num_planes; i++)
+		bytesused[i] = priv->cap_fmt.plane_fmt[i].sizeimage;
 
 	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
 
@@ -2523,7 +2519,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		}
 	}
 
-	caps = get_codec_caps_from_fourcc(priv->out_fourcc);
+	caps = get_codec_caps_from_fourcc(priv->out_fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		ret = -1;
@@ -2534,8 +2530,8 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 	adjusted_count = MIN(adjusted_count, VIDEO_MAX_FRAME);
 
 	set_buffer_pool_params(priv->src_pool, caps,
-			       priv->out_buf_size, adjusted_count,
-			       adjusted_count);
+			       priv->out_fmt.plane_fmt[0].sizeimage,
+			       adjusted_count, adjusted_count);
 
 	allocated_num = alloc_buffers_from_pool(priv, priv->src_pool,
 						&priv->out_buffers);
@@ -2600,7 +2596,7 @@ wait_for_all_bufs_collected(struct v4l_gst *priv,
 
 static gboolean
 retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
-			struct v4l2_pix_format_mplane *cap_pix_fmt)
+			struct v4l2_pix_format_mplane *cap_fmt)
 {
 	GstVideoInfo info;
 	GstVideoMeta *meta;
@@ -2612,9 +2608,9 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
 	}
 
 	for (i = 0; i < meta->n_planes; i++) {
-		cap_pix_fmt->plane_fmt[i].sizeimage =
+		cap_fmt->plane_fmt[i].sizeimage =
 				calc_plane_size(&info, meta, i);
-		cap_pix_fmt->plane_fmt[i].bytesperline = meta->stride[i];
+		cap_fmt->plane_fmt[i].bytesperline = meta->stride[i];
 	}
 
 	return TRUE;
@@ -2663,7 +2659,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	}
 
 	if (!retrieve_cap_frame_info(priv->sink_pool, first_gstbuf,
-				     &priv->cap_pix_fmt)) {
+				     &priv->cap_fmt)) {
 		GST_ERROR("Failed to retrieve frame info on CAPTURE");
 		errno = EINVAL;
 		return 0;
@@ -2696,9 +2692,9 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		   the entire plane size, because the GStreamer buffer
 		   information does not provides how much valid data size
 		   a GstBuffer has. */
-		for (j = 0; j < priv->cap_pix_fmt.num_planes; j++) {
+		for (j = 0; j < priv->cap_fmt.num_planes; j++) {
 			priv->cap_buffers[i].planes[j].length =
-					priv->cap_pix_fmt.plane_fmt[j].sizeimage;
+					priv->cap_fmt.plane_fmt[j].sizeimage;
 		}
 
 		GST_DEBUG("cap gst_buffer[%d] : %p", i,
@@ -2770,7 +2766,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 			g_free(priv->cap_buffers);
 			priv->cap_buffers = NULL;
 		}
-		init_decoded_frame_params(&priv->cap_pix_fmt);
+		init_decoded_frame_params(&priv->cap_fmt);
 
 		ret = 0;
 		goto unlock;
@@ -2843,7 +2839,7 @@ set_out_format_to_pipeline(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 
-	caps = get_codec_caps_from_fourcc(priv->out_fourcc);
+	caps = get_codec_caps_from_fourcc(priv->out_fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		return FALSE;
@@ -2863,12 +2859,12 @@ set_cap_format_to_pipeline(struct v4l_gst *priv)
 	GstVideoFormat fmt;
 	gboolean ret;
 
-	fmt = fourcc_to_gst_video_format(priv->cap_pix_fmt.pixelformat);
+	fmt = fourcc_to_gst_video_format(priv->cap_fmt.pixelformat);
 	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
 		gchar fourcc_str[5];
-		fourcc_to_string(priv->cap_pix_fmt.pixelformat, fourcc_str);
+		fourcc_to_string(priv->cap_fmt.pixelformat, fourcc_str);
 		GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
-			  fourcc_str, priv->cap_pix_fmt.pixelformat);
+			  fourcc_str, priv->cap_fmt.pixelformat);
 		errno = EINVAL;
 		return FALSE;
 	}
@@ -3126,7 +3122,7 @@ find_cap_buffer_by_offset(struct v4l_gst *priv,
 	gint i, j;
 
 	for (i = 0; i < priv->cap_buffers_num; i++) {
-		for (j = 0; j < priv->cap_pix_fmt.num_planes; j++) {
+		for (j = 0; j < priv->cap_fmt.num_planes; j++) {
 			if (priv->cap_buffers[i].planes[j].m.mem_offset ==
 			    offset) {
 				*index = i;
@@ -3255,15 +3251,15 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 		break;
 	case V4L2_BUF_TYPE_PRIVATE:
 		expbuf->reserved[0] = mem->offset;
-		if (priv->cap_pix_fmt.pixelformat == V4L2_PIX_FMT_NV12 ||
-		    priv->cap_pix_fmt.pixelformat == V4L2_PIX_FMT_NV21) {
+		if (priv->cap_fmt.pixelformat == V4L2_PIX_FMT_NV12 ||
+		    priv->cap_fmt.pixelformat == V4L2_PIX_FMT_NV21) {
 			if (expbuf->plane == 1) {
 				/* chromium V4L2 decoder implicitly use reserved[0] as frame offset, so set appropriate
 				   offset to secondary plane. */
 				gsize memory_size = gst_memory_get_sizes(mem, 0, NULL);
-				gsize total_plane_size = priv->cap_pix_fmt.plane_fmt[0].sizeimage + priv->cap_pix_fmt.plane_fmt[1].sizeimage;
+				gsize total_plane_size = priv->cap_fmt.plane_fmt[0].sizeimage + priv->cap_fmt.plane_fmt[1].sizeimage;
 				if (memory_size == total_plane_size) {
-					expbuf->reserved[0] = mem->offset + priv->cap_pix_fmt.plane_fmt[0].sizeimage;
+					expbuf->reserved[0] = mem->offset + priv->cap_fmt.plane_fmt[0].sizeimage;
 				}
 			}
 		}
@@ -3293,8 +3289,8 @@ g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 		  selection->type, selection->target, selection->flags);
 
 	selection->r.top = selection->r.left = 0;
-	selection->r.width = priv->cap_pix_fmt.width;
-	selection->r.height = priv->cap_pix_fmt.height;
+	selection->r.width = priv->cap_fmt.width;
+	selection->r.height = priv->cap_fmt.height;
 
 	return 0;
 }
