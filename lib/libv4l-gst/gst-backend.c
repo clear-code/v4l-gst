@@ -88,6 +88,7 @@ struct v4l_gst {
 	GstElement *appsink;
 
 	GstAppSinkCallbacks appsink_cb;
+	gulong probe_id;
 
 	void *pool_lib_handle;
 	struct libv4l_gst_buffer_pool_ops *pool_ops;
@@ -114,22 +115,17 @@ struct v4l_gst {
 
 	gint returned_out_buffers_num;
 
-	gulong probe_id;
-
 	/* To wait for the requested number of buffers on CAPTURE
 	   to be set in pad_probe_query() */
 	GMutex cap_reqbuf_mutex;
 	GCond cap_reqbuf_cond;
-
 	int is_cap_fmt_acquirable;
+	gint out_cnt;
 
 	gboolean is_pipeline_started;
 
-	GMutex dev_lock;
-
 	GstBuffer *eos_gstbuf;
-
-	gint out_cnt;
+	EOSState eos_state;
 
 	struct {
 		gint cap_min_buffers;
@@ -147,7 +143,7 @@ struct v4l_gst {
 		GQueue *queue;
 	} v4l2events;
 
-	EOSState eos_state;
+	GMutex dev_lock;
 };
 
 static gboolean
