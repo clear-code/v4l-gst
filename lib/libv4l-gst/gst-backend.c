@@ -59,7 +59,7 @@ enum buffer_state {
 };
 
 struct v4l_gst_buffer {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	GstMapInfo info;
 	GstMapFlags flags;
 
@@ -133,7 +133,7 @@ struct v4l_gst {
 
 	GMutex dev_lock;
 
-	GstBuffer *eos_buffer;
+	GstBuffer *eos_gstbuf;
 
 	gint out_cnt;
 
@@ -670,10 +670,10 @@ wait_for_cap_reqbuf_invocation(struct v4l_gst *priv)
 }
 
 static inline void
-release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *buffer)
+release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *gstbuf)
 {
-	GST_TRACE("unref buffer: %p", buffer);
-	gst_buffer_unref(buffer);
+	GST_TRACE("unref buffer: %p", gstbuf);
+	gst_buffer_unref(gstbuf);
 
 	set_event(priv->event_state, POLLIN);
 
@@ -681,11 +681,11 @@ release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *buffer)
 }
 
 static inline void
-release_out_buffer(struct v4l_gst *priv, GstBuffer *buffer)
+release_out_buffer(struct v4l_gst *priv, GstBuffer *gstbuf)
 {
 	g_mutex_lock(&priv->queue_mutex);
 
-	release_out_buffer_unlocked(priv, buffer);
+	release_out_buffer_unlocked(priv, gstbuf);
 
 	g_mutex_unlock(&priv->queue_mutex);
 }
@@ -785,22 +785,22 @@ static GstBuffer *
 pull_buffer_from_sample(GstAppSink *appsink)
 {
 	GstSample *sample;
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 
 	sample = gst_app_sink_pull_sample(appsink);
-	buffer = gst_sample_get_buffer(sample);
-	gst_buffer_ref(buffer);
+	gstbuf = gst_sample_get_buffer(sample);
+	gst_buffer_ref(gstbuf);
 	gst_sample_unref(sample);
 
-	return buffer;
+	return gstbuf;
 }
 
 static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
-	if (priv->eos_buffer)
-		release_out_buffer(priv, priv->eos_buffer);
+	if (priv->eos_gstbuf)
+		release_out_buffer(priv, priv->eos_gstbuf);
 	priv->eos_state = EOS_GOT;
 	g_mutex_lock(&priv->queue_mutex);
 	if (priv->cap_buffers_queue &&
@@ -815,13 +815,13 @@ static GstFlowReturn
 appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	guint len;
 	GQueue *queue;
 
-	buffer = pull_buffer_from_sample(appsink);
+	gstbuf = pull_buffer_from_sample(appsink);
 
-	GST_TRACE("pull buffer: %p", buffer);
+	GST_TRACE("pull buffer: %p", gstbuf);
 
 	if (priv->cap_buffers)
 		queue = priv->cap_buffers_queue;
@@ -830,7 +830,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	g_queue_push_tail(queue, buffer);
+	g_queue_push_tail(queue, gstbuf);
 	len = g_queue_get_length(queue);
 
 	if (len == 2 || (len == 1 && priv->eos_state == EOS_GOT)) {
@@ -1523,7 +1523,7 @@ is_supported_memory_io(enum v4l2_memory memory)
 }
 
 static gboolean
-get_raw_video_params(GstBufferPool *pool, GstBuffer *buffer, GstVideoInfo *info,
+get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, GstVideoInfo *info,
 		     GstVideoMeta **meta)
 {
 	gboolean ret;
@@ -1537,7 +1537,7 @@ get_raw_video_params(GstBufferPool *pool, GstBuffer *buffer, GstVideoInfo *info,
 	if (!ret || GST_VIDEO_INFO_FORMAT(&vinfo) == GST_VIDEO_FORMAT_ENCODED)
 		return FALSE;
 
-	vmeta = gst_buffer_get_video_meta(buffer);
+	vmeta = gst_buffer_get_video_meta(gstbuf);
 	if (!vmeta)
 		return FALSE;
 
@@ -1551,16 +1551,16 @@ get_raw_video_params(GstBufferPool *pool, GstBuffer *buffer, GstVideoInfo *info,
 
 /* This check passes through the verification of the buffer index. */
 static gboolean
-check_no_index_v4l2_buffer(struct v4l2_buffer *buf,
+check_no_index_v4l2_buffer(struct v4l2_buffer *v4l2buf,
 			   struct v4l_gst_buffer *buffers, GstBufferPool *pool)
 {
 	GstVideoMeta *meta;
 	guint n_planes;
 
-	if (!is_supported_memory_io(buf->memory))
+	if (!is_supported_memory_io(v4l2buf->memory))
 		return FALSE;
 
-	if (!buf->m.planes) {
+	if (!v4l2buf->m.planes) {
 		GST_ERROR("This plugin supports only multi-planar "
 			  "buffer type, but planes array is not set");
 		errno = EINVAL;
@@ -1573,13 +1573,13 @@ check_no_index_v4l2_buffer(struct v4l2_buffer *buf,
 		return FALSE;
 	}
 
-	if (get_raw_video_params(pool, buffers[buf->index].buffer, NULL,
+	if (get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL,
 				 &meta))
 		n_planes = meta->n_planes;
 	else
 		n_planes = 1;
 
-	if (buf->length < n_planes || buf->length > VIDEO_MAX_PLANES) {
+	if (v4l2buf->length < n_planes || v4l2buf->length > VIDEO_MAX_PLANES) {
 		GST_ERROR("Incorrect planes array length");
 		errno = EINVAL;
 		return FALSE;
@@ -1589,13 +1589,13 @@ check_no_index_v4l2_buffer(struct v4l2_buffer *buf,
 }
 
 static gboolean
-check_v4l2_buffer(struct v4l2_buffer *buf, struct v4l_gst_buffer *buffers,
+check_v4l2_buffer(struct v4l2_buffer *v4l2buf, struct v4l_gst_buffer *buffers,
 		  gint buffers_num, GstBufferPool *pool)
 {
-	if (!check_no_index_v4l2_buffer(buf, buffers, pool))
+	if (!check_no_index_v4l2_buffer(v4l2buf, buffers, pool))
 		return FALSE;
 
-	if (buf->index >= buffers_num) {
+	if (v4l2buf->index >= buffers_num) {
 		GST_ERROR("buffer index is out of range");
 		errno = EINVAL;
 		return FALSE;
@@ -1612,24 +1612,24 @@ notify_unref(gpointer data)
 
 	priv = buffer->priv;
 
-	release_out_buffer(priv, buffer->buffer);
+	release_out_buffer(priv, buffer->gstbuf);
 }
 
 static int
-qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
+qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	GstFlowReturn flow_ret;
-	GstBuffer *wrapped_buffer;
+	GstBuffer *wrapped_gstbuf;
 	GstMapInfo info;
 	struct v4l_gst_buffer *buffer;
 
-	if (!check_v4l2_buffer(buf, priv->out_buffers, priv->out_buffers_num,
+	if (!check_v4l2_buffer(v4l2buf, priv->out_buffers, priv->out_buffers_num,
 			       priv->src_pool))
 		return -1;
 
-	buffer = &priv->out_buffers[buf->index];
+	buffer = &priv->out_buffers[v4l2buf->index];
 
-	if (buf->m.planes[0].bytesused == 0) {
+	if (v4l2buf->m.planes[0].bytesused == 0) {
 		flow_ret = gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
 		if (flow_ret != GST_FLOW_OK) {
 			GST_ERROR("Failed to send an EOS event");
@@ -1638,25 +1638,25 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 		}
 		GST_DEBUG("Send EOS event");
 
-		gst_buffer_unmap(buffer->buffer, &buffer->info);
+		gst_buffer_unmap(buffer->gstbuf, &buffer->info);
 		memset(&buffer->info, 0, sizeof(buffer->info));
 
 		buffer->state = V4L_GST_BUFFER_QUEUED;
-		priv->eos_buffer = buffer->buffer;
+		priv->eos_gstbuf = buffer->gstbuf;
 
 		return 0;
 	}
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
-		GST_ERROR("Buffer %u is already queued", buf->index);
+		GST_ERROR("Buffer %u is already queued", v4l2buf->index);
 		errno = EINVAL;
 		return -1;
 	}
 
-	GST_TRACE("queue index=%d buffer=%p", buf->index,
-		  priv->out_buffers[buf->index].buffer);
+	GST_TRACE("queue index=%d buffer=%p", v4l2buf->index,
+		  priv->out_buffers[v4l2buf->index].gstbuf);
 
-	gst_buffer_unmap(buffer->buffer, &buffer->info);
+	gst_buffer_unmap(buffer->gstbuf, &buffer->info);
 	memset(&buffer->info, 0, sizeof(buffer->info));
 
 	/* Rewrap an input buffer with the just size of bytesused
@@ -1664,30 +1664,30 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 	   buffer size internally in the GStreame pipeline.
 	   Also set the destructor (notify_unref()). */
 
-	if (!gst_buffer_map(buffer->buffer, &info, GST_MAP_READ)) {
-		GST_ERROR("Failed to map buffer (%p)", buffer->buffer);
+	if (!gst_buffer_map(buffer->gstbuf, &info, GST_MAP_READ)) {
+		GST_ERROR("Failed to map buffer (%p)", buffer->gstbuf);
 		errno = EINVAL;
 		return -1;
 	}
 
-	wrapped_buffer = gst_buffer_new_wrapped_full(
+	wrapped_gstbuf = gst_buffer_new_wrapped_full(
 					GST_MEMORY_FLAG_READONLY, info.data,
-					buf->m.planes[0].bytesused, 0,
-					buf->m.planes[0].bytesused,
+					v4l2buf->m.planes[0].bytesused, 0,
+					v4l2buf->m.planes[0].bytesused,
 					buffer, notify_unref);
 
-	gst_buffer_unmap(buffer->buffer, &info);
+	gst_buffer_unmap(buffer->gstbuf, &info);
 
-	GST_TRACE("buffer rewrap ts=%ld", buf->timestamp.tv_sec);
-	GST_BUFFER_PTS(wrapped_buffer) = GST_TIMEVAL_TO_TIME(buf->timestamp);
+	GST_TRACE("buffer rewrap ts=%ld", v4l2buf->timestamp.tv_sec);
+	GST_BUFFER_PTS(wrapped_gstbuf) = GST_TIMEVAL_TO_TIME(v4l2buf->timestamp);
 
 	buffer->state = V4L_GST_BUFFER_QUEUED;
 
 	flow_ret = gst_app_src_push_buffer(
-			GST_APP_SRC(priv->appsrc), wrapped_buffer);
+			GST_APP_SRC(priv->appsrc), wrapped_gstbuf);
 	if (flow_ret != GST_FLOW_OK) {
 		GST_ERROR("Failed to push a buffer to the pipeline on OUTPUT"
-			  "(index=%d)", buf->index);
+			  "(index=%d)", v4l2buf->index);
 		errno = EINVAL;
 		return -1;
 	}
@@ -1699,19 +1699,19 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 }
 
 static gboolean
-push_to_cap_buffers_queue(struct v4l_gst *priv, GstBuffer *buffer)
+push_to_cap_buffers_queue(struct v4l_gst *priv, GstBuffer *gstbuf)
 {
 	gboolean is_empty;
 	gint index;
 
-	index = g_queue_index(priv->reqbufs_queue, buffer);
+	index = g_queue_index(priv->reqbufs_queue, gstbuf);
 	if (index < 0)
 		return FALSE;
 
 	g_mutex_lock(&priv->queue_mutex);
 
 	is_empty = g_queue_is_empty(priv->cap_buffers_queue);
-	g_queue_push_tail(priv->cap_buffers_queue, buffer);
+	g_queue_push_tail(priv->cap_buffers_queue, gstbuf);
 
 	if (is_empty)
 		g_cond_signal(&priv->queue_cond);
@@ -1724,23 +1724,23 @@ push_to_cap_buffers_queue(struct v4l_gst *priv, GstBuffer *buffer)
 }
 
 static int
-qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
+qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	struct v4l_gst_buffer *buffer;
 
-	if (!check_v4l2_buffer(buf, priv->cap_buffers, priv->cap_buffers_num,
+	if (!check_v4l2_buffer(v4l2buf, priv->cap_buffers, priv->cap_buffers_num,
 			       priv->sink_pool))
 		return -1;
 
-	buffer = &priv->cap_buffers[buf->index];
+	buffer = &priv->cap_buffers[v4l2buf->index];
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
-		GST_ERROR("Buffer %u is already queued", buf->index);
+		GST_ERROR("Buffer %u is already queued", v4l2buf->index);
 		errno = EINVAL;
 		return -1;
 	}
 
-	gst_buffer_unmap(buffer->buffer, &buffer->info);
+	gst_buffer_unmap(buffer->gstbuf, &buffer->info);
 	memset(&buffer->info, 0, sizeof(buffer->info));
 
 	/* The buffers in reqbufs_queue, which are pushed by the REQBUF ioctl
@@ -1748,40 +1748,40 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
 	   They should not back to the buffer pool and prepare to be
 	   dequeued as they are. */
 	if (g_queue_get_length(priv->reqbufs_queue) > 0) {
-		GST_TRACE("push_to_cap_buffers_queue index=%d", buf->index);
-		if (push_to_cap_buffers_queue(priv, buffer->buffer)) {
+		GST_TRACE("push_to_cap_buffers_queue index=%d", v4l2buf->index);
+		if (push_to_cap_buffers_queue(priv, buffer->gstbuf)) {
 			buffer->state =V4L_GST_BUFFER_QUEUED;
 			return 0;
 		}
 	}
 
-	GST_TRACE("unref buffer: %p, index=%d", buffer->buffer, buf->index);
+	GST_TRACE("unref buffer: %p, index=%d", buffer->gstbuf, v4l2buf->index);
 	buffer->state = V4L_GST_BUFFER_QUEUED;
 
-	gst_buffer_unref(buffer->buffer);
+	gst_buffer_unref(buffer->gstbuf);
 
 	return 0;
 }
 
 int
-qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
+qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret;
 
 	GST_TRACE("VIDIOC_QBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  v4l2_buffer_type_to_string(buf->type), buf->type,
-		  buf->index, buf->flags);
+		  v4l2_buffer_type_to_string(v4l2buf->type), v4l2buf->type,
+		  v4l2buf->index, v4l2buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
-	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		ret = qbuf_ioctl_out(priv, buf);
+	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		ret = qbuf_ioctl_out(priv, v4l2buf);
 		if (ret < 0) {
 			g_mutex_unlock(&priv->dev_lock);
 			return ret;
 		}
-	} else if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		ret = qbuf_ioctl_cap(priv, buf);
+	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		ret = qbuf_ioctl_cap(priv, v4l2buf);
 		if (ret < 0) {
 			g_mutex_unlock(&priv->dev_lock);
 			return 0;
@@ -1808,23 +1808,23 @@ static void
 set_v4l2_buffer_plane_params(struct v4l_gst *priv,
 			     struct v4l_gst_buffer *buffers, guint n_planes,
 			     guint bytesused[], struct timeval *timestamp,
-			     struct v4l2_buffer *buf)
+			     struct v4l2_buffer *v4l2buf)
 {
 	gint i;
 
-	memcpy(buf->m.planes, buffers[buf->index].planes,
+	memcpy(v4l2buf->m.planes, buffers[v4l2buf->index].planes,
 	       sizeof(struct v4l2_plane) * n_planes);
 
 	if (bytesused) {
 		for (i = 0; i < n_planes; i++)
-			buf->m.planes[i].bytesused = bytesused[i];
+			v4l2buf->m.planes[i].bytesused = bytesused[i];
 	}
 
 	if (timestamp) {
-		buf->timestamp.tv_sec = timestamp->tv_sec;
-		buf->timestamp.tv_usec = timestamp->tv_usec;
+		v4l2buf->timestamp.tv_sec = timestamp->tv_sec;
+		v4l2buf->timestamp.tv_usec = timestamp->tv_usec;
 	} else {
-		buf->timestamp.tv_sec = buf->timestamp.tv_usec = 0;
+		v4l2buf->timestamp.tv_sec = v4l2buf->timestamp.tv_usec = 0;
 	}
 }
 
@@ -1832,47 +1832,47 @@ static int
 fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 		 struct v4l_gst_buffer *buffers, gint buffers_num,
 		 guint bytesused[], struct timeval *timestamp,
-		 struct v4l2_buffer *buf)
+		 struct v4l2_buffer *v4l2buf)
 {
 	GstVideoMeta *meta = NULL;
 	guint n_planes;
 
-	get_raw_video_params(pool, buffers[buf->index].buffer, NULL, &meta);
+	get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL, &meta);
 
 	n_planes = (meta) ? meta->n_planes : 1;
 
 	set_v4l2_buffer_plane_params(priv, buffers, n_planes, bytesused,
-				     timestamp, buf);
+				     timestamp, v4l2buf);
 
-	buf->flags = 0;
-	if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
+	v4l2buf->flags = 0;
+	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    priv->eos_state == EOS_GOT &&
 	    g_queue_is_empty(priv->cap_buffers_queue)) {
 		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
-		buf->flags |= V4L2_BUF_FLAG_LAST;
+		v4l2buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
 		clear_event(priv->event_state, POLLOUT);
 	}
 
 	/* set unused params */
-	memset(&buf->timecode, 0, sizeof(buf->timecode));
-	buf->sequence = 0;
-	buf->field = V4L2_FIELD_NONE;
+	memset(&v4l2buf->timecode, 0, sizeof(v4l2buf->timecode));
+	v4l2buf->sequence = 0;
+	v4l2buf->field = V4L2_FIELD_NONE;
 
-	buf->length = n_planes;
+	v4l2buf->length = n_planes;
 
 	return 0;
 }
 
 static guint
 get_v4l2_buffer_index(struct v4l_gst_buffer *buffers, gint buffers_num,
-		      GstBuffer *buffer)
+		      GstBuffer *gstbuf)
 {
 	gint i;
 	guint index = G_MAXUINT;
 
 	for (i = 0; i < buffers_num; i++) {
-		if (buffers[i].buffer == buffer) {
+		if (buffers[i].gstbuf == gstbuf) {
 			index = i;
 			break;
 		}
@@ -1884,46 +1884,46 @@ get_v4l2_buffer_index(struct v4l_gst_buffer *buffers, gint buffers_num,
 static GstBuffer *
 dequeue_blocking(struct v4l_gst *priv, GQueue *queue, GCond *cond)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 
-	buffer = g_queue_pop_head(queue);
-	while (!buffer && priv->is_pipeline_started) {
+        gstbuf = g_queue_pop_head(queue);
+	while (!gstbuf && priv->is_pipeline_started) {
 		g_cond_wait(cond, &priv->queue_mutex);
-		buffer = g_queue_pop_head(queue);
+		gstbuf = g_queue_pop_head(queue);
 	}
 
-	return buffer;
+	return gstbuf;
 }
 
 static GstBuffer *
 dequeue_non_blocking(GQueue *queue)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 
-	buffer = g_queue_pop_head(queue);
-	if (!buffer) {
+	gstbuf = g_queue_pop_head(queue);
+	if (!gstbuf) {
 		GST_TRACE("The buffer pool is empty in "
 			  "the non-blocking mode, return EAGAIN");
 		errno = EAGAIN;
 	}
 
-	return buffer;
+	return gstbuf;
 }
 
 static GstBuffer *
 dequeue_buffer(struct v4l_gst *priv, GQueue *queue, GCond *cond,
 		int type)
 {
-	GstBuffer *buffer = NULL;
+	GstBuffer *gstbuf = NULL;
 
 	g_mutex_lock(&priv->queue_mutex);
 
 	if (priv->is_non_blocking)
-		buffer = dequeue_non_blocking(queue);
+		gstbuf = dequeue_non_blocking(queue);
 	else
-		buffer = dequeue_blocking(priv, queue, cond);
+		gstbuf = dequeue_blocking(priv, queue, cond);
 
-	if (!buffer)
+	if (!gstbuf)
 		goto unlock;
 
 	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -1941,14 +1941,14 @@ dequeue_buffer(struct v4l_gst *priv, GQueue *queue, GCond *cond,
  unlock:
 	g_mutex_unlock(&priv->queue_mutex);
 
-	return buffer;
+	return gstbuf;
 }
 
 static GstBuffer *
 acquire_buffer_from_pool(struct v4l_gst *priv, GstBufferPool *pool)
 {
 	GstFlowReturn flow_ret;
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	GstBufferPoolAcquireParams params = { 0, };
 
 	if (priv->is_non_blocking) {
@@ -1956,7 +1956,7 @@ acquire_buffer_from_pool(struct v4l_gst *priv, GstBufferPool *pool)
 	} else
 		g_mutex_unlock(&priv->queue_mutex);
 
-	flow_ret = gst_buffer_pool_acquire_buffer(pool, &buffer, &params);
+	flow_ret = gst_buffer_pool_acquire_buffer(pool, &gstbuf, &params);
 	if (!priv->is_non_blocking)
 		g_mutex_lock(&priv->queue_mutex);
 
@@ -1971,13 +1971,13 @@ acquire_buffer_from_pool(struct v4l_gst *priv, GstBufferPool *pool)
 		return NULL;
 	}
 
-	return buffer;
+	return gstbuf;
 }
 
 static int
-dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
+dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	guint index;
 
 	if (!priv->is_pipeline_started) {
@@ -1986,14 +1986,14 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 		return -1;
 	}
 
-	if (!check_no_index_v4l2_buffer(buf, priv->out_buffers,
+	if (!check_no_index_v4l2_buffer(v4l2buf, priv->out_buffers,
 					priv->src_pool))
 		return -1;
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	buffer = acquire_buffer_from_pool(priv, priv->src_pool);
-	if (!buffer) {
+	gstbuf = acquire_buffer_from_pool(priv, priv->src_pool);
+	if (!gstbuf) {
 		g_mutex_unlock(&priv->queue_mutex);
 		return -1;
 	}
@@ -2008,7 +2008,7 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 	g_mutex_unlock(&priv->queue_mutex);
 
 	index = get_v4l2_buffer_index(priv->out_buffers,
-				      priv->out_buffers_num, buffer);
+				      priv->out_buffers_num, gstbuf);
 	if (index >= priv->out_buffers_num) {
 		GST_ERROR("Failed to get a valid buffer index "
 			  "on OUTPUT");
@@ -2016,50 +2016,50 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *buf)
 		return -1;
 	}
 
-	buf->index = index;
-	priv->out_buffers[buf->index].state = V4L_GST_BUFFER_DEQUEUED;
+	v4l2buf->index = index;
+	priv->out_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
-	GST_TRACE("success dequeue buffer index=%d buffer=%p", index, buffer);
+	GST_TRACE("success dequeue buffer index=%d buffer=%p", index, gstbuf);
 
 	return fill_v4l2_buffer(priv, priv->src_pool,
 				priv->out_buffers, priv->out_buffers_num,
-				NULL, NULL, buf);
+				NULL, NULL, v4l2buf);
 }
 
 static int
-dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
+dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	guint index;
 	struct timeval timestamp;
 	guint bytesused[GST_VIDEO_MAX_PLANES];
 	gint i;
 
-	if (!check_no_index_v4l2_buffer(buf, priv->cap_buffers,
+	if (!check_no_index_v4l2_buffer(v4l2buf, priv->cap_buffers,
 					priv->sink_pool))
 		return -1;
 
-	buffer = dequeue_buffer(priv, priv->cap_buffers_queue,
-				&priv->queue_cond, buf->type);
-	if (!buffer)
+	gstbuf = dequeue_buffer(priv, priv->cap_buffers_queue,
+				&priv->queue_cond, v4l2buf->type);
+	if (!gstbuf)
 		return -1;
 
 	index = get_v4l2_buffer_index(priv->cap_buffers,
-				      priv->cap_buffers_num, buffer);
+				      priv->cap_buffers_num, gstbuf);
 	if (index >= priv->cap_buffers_num) {
 		GST_ERROR("Failed to get a valid buffer index "
 			  "on CAPTURE");
 		errno = EINVAL;
-		gst_buffer_unref(buffer);
+		gst_buffer_unref(gstbuf);
 		return -1;
 	}
 
-	buf->index = index;
+	v4l2buf->index = index;
 
 	for (i = 0; i < priv->cap_pix_fmt.num_planes; i++)
 		bytesused[i] = priv->cap_pix_fmt.plane_fmt[i].sizeimage;
 
-	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(buffer), timestamp);
+	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
 
 	if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
 		/* It might be occurred when a buffer is unexpectedly queued
@@ -2067,38 +2067,38 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *buf)
 		   the buffer should have been already incremeneted, need to
 		   revert it here. */
 		GST_WARNING("Already dequeued buffer %u is dequeued again", index);
-		gst_buffer_unref(priv->cap_buffers[index].buffer);
+		gst_buffer_unref(priv->cap_buffers[index].gstbuf);
 	}
-	priv->cap_buffers[buf->index].state = V4L_GST_BUFFER_DEQUEUED;
+	priv->cap_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
-	GST_TRACE("success dequeue buffer index=%d buffer=%p ts=%ld",
-		  index, buffer, timestamp.tv_sec);
+	GST_TRACE("success dequeue buffer index=%d gstbuf=%p ts=%ld",
+		  index, gstbuf, timestamp.tv_sec);
 
 	return fill_v4l2_buffer(priv, priv->sink_pool,
 				priv->cap_buffers, priv->cap_buffers_num,
-				bytesused, &timestamp, buf);
+				bytesused, &timestamp, v4l2buf);
 }
 
 int
-dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
+dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret;
 
 	GST_TRACE("VIDIOC_DQBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  v4l2_buffer_type_to_string(buf->type), buf->type,
-		  buf->index, buf->flags);
+		  v4l2_buffer_type_to_string(v4l2buf->type), v4l2buf->type,
+		  v4l2buf->index, v4l2buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
-	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		ret = dqbuf_ioctl_out(priv, buf);
+	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		ret = dqbuf_ioctl_out(priv, v4l2buf);
 		if (ret < 0) {
 			g_mutex_unlock(&priv->dev_lock);
 			return ret;
 		}
 
-	} else if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		ret = dqbuf_ioctl_cap(priv, buf);
+	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		ret = dqbuf_ioctl_cap(priv, v4l2buf);
 		if (ret < 0) {
 			g_mutex_unlock(&priv->dev_lock);
 			return ret;
@@ -2117,7 +2117,7 @@ dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 }
 
 int
-querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
+querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	struct v4l_gst_buffer *buffers;
 	gint buffers_num;
@@ -2125,16 +2125,16 @@ querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 	int ret;
 
 	GST_TRACE("VIDIOC_QUERYBUF: type: %s (0x%x) index: %d flags: 0x%x",
-		  v4l2_buffer_type_to_string(buf->type), buf->type,
-		  buf->index, buf->flags);
+		  v4l2_buffer_type_to_string(v4l2buf->type), v4l2buf->type,
+		  v4l2buf->index, v4l2buf->flags);
 
 	g_mutex_lock(&priv->dev_lock);
 
-	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		buffers = priv->out_buffers;
 		buffers_num = priv->out_buffers_num;
 		pool = priv->src_pool;
-	} else if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		buffers = priv->cap_buffers;
 		buffers_num = priv->cap_buffers_num;
 		pool = priv->sink_pool;
@@ -2145,13 +2145,13 @@ querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf)
 		return -1;
 	}
 
-	if (!check_v4l2_buffer(buf, buffers, buffers_num, pool)) {
+	if (!check_v4l2_buffer(v4l2buf, buffers, buffers_num, pool)) {
 		g_mutex_unlock(&priv->dev_lock);
 		return -1;
 	}
 
 	ret = fill_v4l2_buffer(priv, pool, buffers, buffers_num,
-			       NULL, NULL, buf);
+			       NULL, NULL, v4l2buf);
 
 	g_mutex_unlock(&priv->dev_lock);
 
@@ -2194,10 +2194,10 @@ set_mem_offset(struct v4l_gst_buffer *buffer, GstBufferPool *pool, gsize offset)
 	if (page_size < 0)
 		page_size = sysconf(_SC_PAGESIZE);
 
-	if (!get_raw_video_params(pool, buffer->buffer, &info, &meta)) {
+	if (!get_raw_video_params(pool, buffer->gstbuf, &info, &meta)) {
 		/* deal with this as a single plane */
 		buffer->planes[0].m.mem_offset = offset;
-		return PAGE_ALIGN(gst_buffer_get_size(buffer->buffer),
+		return PAGE_ALIGN(gst_buffer_get_size(buffer->gstbuf),
 			page_size) + offset;
 	}
 
@@ -2242,7 +2242,7 @@ alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 
 	for (i = 0; i < actual_max_buffers; i++) {
 		flow_ret = gst_buffer_pool_acquire_buffer(pool,
-							  &bufs_list[i].buffer,
+							  &bufs_list[i].gstbuf,
 							  &params);
 		if (flow_ret != GST_FLOW_OK) {
 			GST_ERROR("Failed to acquire a buffer on OUTPUT");
@@ -2253,7 +2253,7 @@ alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 		bufs_list[i].priv = priv;
 		bufs_list[i].state = V4L_GST_BUFFER_DEQUEUED;
 
-		GST_DEBUG("out gst_buffer[%d] : %p", i, bufs_list[i].buffer);
+		GST_DEBUG("out gst_buffer[%d] : %p", i, bufs_list[i].gstbuf);
 	}
 
 	*buffers = bufs_list;
@@ -2266,8 +2266,8 @@ alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 	/* error cases */
 free_bufs_list:
 	for (i = 0; i < actual_max_buffers; i++) {
-		if (bufs_list[i].buffer)
-			gst_buffer_unref(bufs_list[i].buffer);
+		if (bufs_list[i].gstbuf)
+			gst_buffer_unref(bufs_list[i].gstbuf);
 	}
 	g_free(bufs_list);
 inactivate_pool:
@@ -2278,29 +2278,21 @@ inactivate_pool:
 
 static GstFlowReturn
 force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
-		      gint buffers_num, gboolean map, GstBuffer **prev_buffer)
+		      gint buffers_num, gboolean map)
 {
 	GstFlowReturn flow_ret;
 	GstBufferPoolAcquireParams params = { 0, };
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	guint index;
 
 	params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
 
 	/* force to make buffers available to the V4L2 caller side */
-	flow_ret = gst_buffer_pool_acquire_buffer(pool, &buffer, &params);
+	flow_ret = gst_buffer_pool_acquire_buffer(pool, &gstbuf, &params);
 	if (flow_ret != GST_FLOW_OK)
 		return flow_ret;
-	if (prev_buffer) {
-		/* omxbufferpool always returns same address
-		   https://github.com/renesas-rcar/gst-omx/blob/RCAR-GEN3e/1.16.3/omx/gstomxbufferpool.c#L739-L779
-		*/
-		if (*prev_buffer && buffer == *prev_buffer)
-			return GST_FLOW_ERROR;
-		*prev_buffer = buffer;
-	}
 
-	index = get_v4l2_buffer_index(buffers, buffers_num, buffer);
+	index = get_v4l2_buffer_index(buffers, buffers_num, gstbuf);
 	if (index >= buffers_num) {
 		GST_ERROR("Failed to get a valid buffer index");
 		errno = EINVAL;
@@ -2312,9 +2304,9 @@ force_dqbuf_from_pool(GstBufferPool *pool, struct v4l_gst_buffer *buffers,
 	if (!map)
 		return GST_FLOW_OK;
 
-	if (!gst_buffer_map(buffer, &buffers[index].info,
+	if (!gst_buffer_map(gstbuf, &buffers[index].info,
 			    buffers[index].flags)) {
-		GST_ERROR("Failed to map buffer (%p)", buffer);
+		GST_ERROR("Failed to map buffer (%p)", gstbuf);
 		errno = EINVAL;
 		return GST_FLOW_ERROR;
 	}
@@ -2327,7 +2319,7 @@ force_out_dqbuf(struct v4l_gst *priv)
 	g_mutex_lock(&priv->queue_mutex);
 
 	while (force_dqbuf_from_pool(priv->src_pool, priv->out_buffers,
-			   priv->out_buffers_num, TRUE, NULL) == GST_FLOW_OK) {
+			   priv->out_buffers_num, TRUE) == GST_FLOW_OK) {
 		priv->returned_out_buffers_num--;
 	}
 
@@ -2343,22 +2335,22 @@ force_out_dqbuf(struct v4l_gst *priv)
 static int
 force_cap_dqbuf(struct v4l_gst *priv)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 	guint index;
 
 	do {
 		g_mutex_lock(&priv->queue_mutex);
-		buffer = dequeue_non_blocking(priv->cap_buffers_queue);
+		gstbuf = dequeue_non_blocking(priv->cap_buffers_queue);
 		 /* This function may set errno but not need to expose it to
 		    clients in this case */
 		errno = 0;
 		g_mutex_unlock(&priv->queue_mutex);
 
-		if (!buffer)
+		if (!gstbuf)
 			break;
 
 		index = get_v4l2_buffer_index(priv->cap_buffers,
-					      priv->cap_buffers_num, buffer);
+					      priv->cap_buffers_num, gstbuf);
 		if (index >= priv->cap_buffers_num) {
 			GST_ERROR("Failed to get a valid buffer index "
 				  "on CAPTURE");
@@ -2368,14 +2360,14 @@ force_cap_dqbuf(struct v4l_gst *priv)
 
 		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
 		GST_DEBUG("CAPTURE buffer %u is forcedly dequeued", index);
-	} while (buffer);
+	} while (gstbuf);
 
 	clear_event(priv->event_state, POLLOUT);
 
 	for (index = 0; index < priv->cap_buffers_num; index++) {
 		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED)
 			continue;
-		gst_buffer_ref(priv->cap_buffers[index].buffer);
+		gst_buffer_ref(priv->cap_buffers[index].gstbuf);
 		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
 	}
 
@@ -2451,7 +2443,7 @@ flush_buffer_queues:
 	   of the OUTPUT bufferpool and freeing them by inactivating
 	   the bufferpool for flushing. */
 	if (steal_ref)
-		gst_buffer_ref(priv->out_buffers[0].buffer);
+		gst_buffer_ref(priv->out_buffers[0].gstbuf);
 
 	/* wake up blocking of the OUTPUT buffers acquistion */
 	if (!gst_buffer_pool_set_active(priv->src_pool, FALSE)) {
@@ -2502,7 +2494,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		for (i = 0; i < priv->out_buffers_num; i++) {
 			if (priv->out_buffers[i].state ==
 			    V4L_GST_BUFFER_DEQUEUED) {
-				gst_buffer_unref(priv->out_buffers[i].buffer);
+				gst_buffer_unref(priv->out_buffers[i].gstbuf);
 			}
 		}
 
@@ -2562,7 +2554,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 			priv->mmap_offset);
 
 		priv->out_buffers[i].planes[0].length =
-				gst_buffer_get_size(priv->out_buffers[i].buffer);
+				gst_buffer_get_size(priv->out_buffers[i].gstbuf);
 	}
 
 	req->count = priv->out_buffers_num = allocated_num;
@@ -2582,17 +2574,17 @@ unlock:
 static GstBuffer *
 peek_first_cap_buffer(struct v4l_gst *priv)
 {
-	GstBuffer *buffer;
+	GstBuffer *gstbuf;
 
 	g_mutex_lock(&priv->queue_mutex);
-	buffer = g_queue_peek_head(priv->reqbufs_queue);
-	while (!buffer) {
+	gstbuf = g_queue_peek_head(priv->reqbufs_queue);
+	while (!gstbuf) {
 		g_cond_wait(&priv->queue_cond, &priv->queue_mutex);
-		buffer = g_queue_peek_head(priv->reqbufs_queue);
+		gstbuf = g_queue_peek_head(priv->reqbufs_queue);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
 
-	return buffer;
+	return gstbuf;
 }
 
 static void
@@ -2607,14 +2599,14 @@ wait_for_all_bufs_collected(struct v4l_gst *priv,
 }
 
 static gboolean
-retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *buffer,
+retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
 			struct v4l2_pix_format_mplane *cap_pix_fmt)
 {
 	GstVideoInfo info;
 	GstVideoMeta *meta;
 	gint i;
 
-	if (!get_raw_video_params(pool, buffer, &info, &meta)) {
+	if (!get_raw_video_params(pool, gstbuf, &info, &meta)) {
 		GST_ERROR("Failed to get video meta data");
 		return FALSE;
 	}
@@ -2631,7 +2623,7 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *buffer,
 static guint
 create_cap_buffers_list(struct v4l_gst *priv)
 {
-	GstBuffer *first_buffer;
+	GstBuffer *first_gstbuf;
 	guint actual_max_buffers;
 	gint i, j;
 
@@ -2642,23 +2634,23 @@ create_cap_buffers_list(struct v4l_gst *priv)
 
 	g_mutex_unlock(&priv->dev_lock);
 
-	first_buffer = peek_first_cap_buffer(priv);
+	first_gstbuf = peek_first_cap_buffer(priv);
 
 	g_mutex_lock(&priv->dev_lock);
 
-	if (!first_buffer->pool) {
+	if (!first_gstbuf->pool) {
 		GST_ERROR("Cannot handle buffers not belonging to "
 			  "a bufferpool");
 		errno = EINVAL;
 		return 0;
 	}
 
-	if (priv->sink_pool != first_buffer->pool) {
+	if (priv->sink_pool != first_gstbuf->pool) {
 		GST_DEBUG("The buffer pool we prepared is not used by "
 			  "the pipeline, so replace it with the pool that is "
 			  "actually used");
 		gst_object_unref(priv->sink_pool);
-		priv->sink_pool = gst_object_ref(first_buffer->pool);
+		priv->sink_pool = gst_object_ref(first_gstbuf->pool);
 	}
 
 	/* Confirm the number of buffers actually set to the buffer pool. */
@@ -2670,7 +2662,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	if (!retrieve_cap_frame_info(priv->sink_pool, first_buffer,
+	if (!retrieve_cap_frame_info(priv->sink_pool, first_gstbuf,
 				     &priv->cap_pix_fmt)) {
 		GST_ERROR("Failed to retrieve frame info on CAPTURE");
 		errno = EINVAL;
@@ -2688,7 +2680,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	priv->cap_buffers = g_new0(struct v4l_gst_buffer, actual_max_buffers);
 
 	for (i = 0; i < actual_max_buffers; i++) {
-		priv->cap_buffers[i].buffer =
+		priv->cap_buffers[i].gstbuf =
 				g_queue_peek_nth(priv->reqbufs_queue, i);
 
 		/* Set identifiers for associating a GstBuffer with
@@ -2710,7 +2702,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		}
 
 		GST_DEBUG("cap gst_buffer[%d] : %p", i,
-			  priv->cap_buffers[i].buffer);
+			  priv->cap_buffers[i].gstbuf);
 	}
 
 	GST_DEBUG("The number of buffers actually set to the buffer pool is %d",
@@ -2762,7 +2754,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 		for (i = 0; i < priv->cap_buffers_num; i++) {
 			if (priv->cap_buffers[i].state ==
 			    V4L_GST_BUFFER_DEQUEUED) {
-				gst_buffer_unref(priv->cap_buffers[i].buffer);
+				gst_buffer_unref(priv->cap_buffers[i].gstbuf);
 			}
 		}
 
@@ -2937,7 +2929,7 @@ streamon_ioctl_out(struct v4l_gst *priv)
 		}
 
 		/* Restore the extra reference counted up in the streamoff */
-		gst_buffer_unref(priv->out_buffers[0].buffer);
+		gst_buffer_unref(priv->out_buffers[0].gstbuf);
 	}
 
 	priv->eos_state = EOS_NONE;
@@ -3110,17 +3102,17 @@ map_out_buffer(struct v4l_gst *priv, int index, int prot)
 	map_flags = (prot & PROT_READ) ? GST_MAP_READ : 0;
 	map_flags |= (prot & PROT_WRITE) ? GST_MAP_WRITE : 0;
 
-	if (!gst_buffer_map(priv->out_buffers[index].buffer, &info,
+	if (!gst_buffer_map(priv->out_buffers[index].gstbuf, &info,
 			    map_flags)) {
 		GST_ERROR("Failed to map buffer (%p)",
-			  priv->out_buffers[index].buffer);
+			  priv->out_buffers[index].gstbuf);
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
 
 	data = info.data;
 
-	gst_buffer_unmap(priv->out_buffers[index].buffer, &info);
+	gst_buffer_unmap(priv->out_buffers[index].gstbuf, &info);
 
 	priv->out_buffers[index].flags = map_flags;
 
@@ -3159,27 +3151,27 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 	map_flags = (prot & PROT_READ) ? GST_MAP_READ : 0;
 	map_flags |= (prot & PROT_WRITE) ? GST_MAP_WRITE : 0;
 
-	if (!gst_buffer_map(priv->cap_buffers[index].buffer, &info,
+	if (!gst_buffer_map(priv->cap_buffers[index].gstbuf, &info,
 			    map_flags)) {
 		GST_ERROR("Failed to map buffer (%p)",
-			  priv->cap_buffers[index].buffer);
+			  priv->cap_buffers[index].gstbuf);
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
 
 	if (!get_raw_video_params(priv->sink_pool,
-				  priv->cap_buffers[index].buffer,
+				  priv->cap_buffers[index].gstbuf,
 				  NULL, &meta)) {
 		GST_ERROR("Failed to get video meta data");
 		errno = EINVAL;
-		gst_buffer_unmap(priv->cap_buffers[index].buffer,
+		gst_buffer_unmap(priv->cap_buffers[index].gstbuf,
 				 &priv->cap_buffers[index].info);
 		return MAP_FAILED;
 	}
 
 	data = info.data + meta->offset[plane];
 
-	gst_buffer_unmap(priv->cap_buffers[index].buffer, &info);
+	gst_buffer_unmap(priv->cap_buffers[index].gstbuf, &info);
 
 	priv->cap_buffers[index].flags = map_flags;
 
@@ -3240,11 +3232,11 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 	if ((expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) ||
 	    (expbuf->type == V4L2_BUF_TYPE_PRIVATE)) {
 		buffer = &priv->cap_buffers[expbuf->index];
-		if (expbuf->plane < gst_buffer_n_memory(buffer->buffer)) {
+		if (expbuf->plane < gst_buffer_n_memory(buffer->gstbuf)) {
 			i = expbuf->plane;
 		}
 
-		mem = gst_buffer_peek_memory(buffer->buffer, i);
+		mem = gst_buffer_peek_memory(buffer->gstbuf, i);
 		if (!gst_is_dmabuf_memory(mem)) {
 			GST_ERROR("Failed to get dambuf emmory.");
 			return -1;
