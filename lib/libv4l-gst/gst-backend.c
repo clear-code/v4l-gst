@@ -107,9 +107,8 @@ struct v4l_gst {
 
 	int64_t mmap_offset;
 
-	GQueue *reqbufs_queue;
-
-	GQueue *cap_buffers_queue;
+	GQueue *reqbufs_queue;     /* GStBuffer */
+	GQueue *cap_buffers_queue; /* GstBuffer */
 	GMutex queue_mutex;
 	GCond queue_cond;
 
