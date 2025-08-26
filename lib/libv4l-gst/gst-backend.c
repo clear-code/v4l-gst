@@ -93,13 +93,17 @@ struct v4l_gst {
 	void *pool_lib_handle;
 	struct libv4l_gst_buffer_pool_ops *pool_ops;
 
+	/*
+	 *  out (OUTPUT) : Application --> v4l-gst  Encoded data like H.264
+	 *  cap (CAPTURE): Application <-- v4l-gst  Decoded data like NV12
+	 */
 	GArray *supported_out_fmts; /* struct fmt */
 	GArray *supported_cap_fmts; /* struct fmt */
 	struct v4l2_pix_format_mplane out_fmt;
 	struct v4l2_pix_format_mplane cap_fmt;
 
-	GstBufferPool *src_pool;
-	GstBufferPool *sink_pool;
+	GstBufferPool *src_pool;  /* for OUTPUT  */
+	GstBufferPool *sink_pool; /* for CAPTURE */
 
 	struct v4l_gst_buffer *out_buffers;
 	gint out_buffers_num;
