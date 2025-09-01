@@ -577,15 +577,20 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 				preferred_found = TRUE;
 			} else {
 				g_array_append_vals(priv->supported_cap_fmts,
-						     &color_fmt, 1);
+						    &color_fmt, 1);
 			}
 		}
 	}
 
-	if (preferred && !preferred_found) {
-		fourcc_to_string(preferred, fourcc_str);
-		GST_INFO("Preferred format %s (0x%x) isn't supported",
-			 fourcc_str, preferred);
+	if (preferred) {
+		if (preferred_found) {
+			/* TODO: Add a new option to force use this? */
+			g_array_set_size(priv->supported_cap_fmts, 1);
+		} else {
+			fourcc_to_string(preferred, fourcc_str);
+			GST_INFO("Preferred format %s (0x%x) isn't supported",
+				 fourcc_str, preferred);
+		}
 	}
 
 	gst_caps_unref(caps);
