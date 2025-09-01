@@ -1267,7 +1267,7 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 			  "width: %u, height: %u, pixelformat: %s (0x%x)",
 			  pix_fmt->width, pix_fmt->height,
 			  fourcc_str, pix_fmt->pixelformat);
-		errno = ENOTTY;
+		errno = EBUSY;
 		return -1;
 	}
 	GST_OBJECT_UNLOCK(priv->pipeline);
