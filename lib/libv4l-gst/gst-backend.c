@@ -2744,7 +2744,6 @@ static int
 reqbuf_ioctl_cap(struct v4l_gst *priv,
 		 struct v4l2_requestbuffers *req)
 {
-	guint buffers_num;
 	GstStateChangeReturn state_ret;
 	int ret;
 	gint i;
@@ -2819,13 +2818,11 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 	g_cond_signal(&priv->cap_reqbuf_cond);
 	g_mutex_unlock(&priv->cap_reqbuf_mutex);
 
-	buffers_num = create_cap_buffers_list(priv);
-	if (buffers_num == 0) {
+	req->count = priv->cap_buffers_num = create_cap_buffers_list(priv);
+	if (req->count == 0) {
 		ret = -1;
 		goto unlock;
 	}
-
-	req->count = priv->cap_buffers_num = buffers_num;
 
 	GST_DEBUG("buffers count=%d", req->count);
 
