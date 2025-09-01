@@ -513,6 +513,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	const gchar *fmt_str;
 	GstVideoFormat fmt;
 	guint32 preferred = priv->config.preferred_format;
+	gboolean preferred_found = FALSE;
 	guint i, j;
 	struct fmt color_fmt;
 	gchar fourcc_str[5];
@@ -573,6 +574,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 				fourcc_to_string(preferred, fourcc_str);
 				GST_DEBUG("Preferred format: %s (0x%x)",
 					  fourcc_str, preferred);
+				preferred_found = TRUE;
 			} else {
 				g_array_append_vals(priv->supported_cap_fmts,
 						     &color_fmt, 1);
@@ -598,11 +600,18 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 				fourcc_to_string(preferred, fourcc_str);
 				GST_DEBUG("Preferred format: %s (0x%x)",
 					  fourcc_str, preferred);
+				preferred_found = TRUE;
 			} else if (color_fmt.fourcc) {
 				g_array_append_vals(priv->supported_cap_fmts,
 						    &color_fmt, 1);
 			}
 		}
+	}
+
+	if (preferred && !preferred_found) {
+		fourcc_to_string(preferred, fourcc_str);
+		GST_INFO("Preferred format %s (0x%x) isn't supported",
+			 fourcc_str, preferred);
 	}
 
 	gst_caps_unref(caps);
