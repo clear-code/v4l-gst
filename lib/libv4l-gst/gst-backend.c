@@ -579,32 +579,6 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 				g_array_append_vals(priv->supported_cap_fmts,
 						     &color_fmt, 1);
 			}
-
-			/* Add legacy RGB formats */
-			if (color_fmt.fourcc == V4L2_PIX_FMT_ARGB32) {
-				color_fmt.fourcc = V4L2_PIX_FMT_RGB32;
-				g_strlcpy(color_fmt.desc,
-					  "RGB4", FMTDESC_NAME_LENGTH);
-			} else if (color_fmt.fourcc == V4L2_PIX_FMT_ABGR32) {
-				color_fmt.fourcc = V4L2_PIX_FMT_BGR32;
-				g_strlcpy(color_fmt.desc,
-					  "BGR4", FMTDESC_NAME_LENGTH);
-			} else {
-				color_fmt.fourcc = 0;
-			}
-
-			if (color_fmt.fourcc && color_fmt.fourcc == preferred) {
-				g_array_prepend_vals(priv->supported_cap_fmts,
-						     &color_fmt, 1);
-
-				fourcc_to_string(preferred, fourcc_str);
-				GST_DEBUG("Preferred format: %s (0x%x)",
-					  fourcc_str, preferred);
-				preferred_found = TRUE;
-			} else if (color_fmt.fourcc) {
-				g_array_append_vals(priv->supported_cap_fmts,
-						    &color_fmt, 1);
-			}
 		}
 	}
 
