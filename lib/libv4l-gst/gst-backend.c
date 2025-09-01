@@ -135,6 +135,7 @@ struct v4l_gst {
 		gint cap_min_buffers;
 		gint max_width;
 		gint max_height;
+		guint32 preferred_format;
 		gchar *h264_pipeline;
 		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
@@ -180,6 +181,9 @@ parse_config_file(struct v4l_gst *priv)
 
 	/* [libv4l-gst] */
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
+		gchar *preferred_format;
+		guint preferred_format_len = 0;
+
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
 		priv->config.pool_lib_path
@@ -205,19 +209,34 @@ parse_config_file(struct v4l_gst *priv)
 		priv->config.max_height
 			= g_key_file_get_integer(conf_key, libv4l_gst_group,
 						 "max-height", NULL);
+
+		preferred_format
+			= g_key_file_get_string(conf_key, libv4l_gst_group,
+						"preferred-format",
+						NULL);
+		if (preferred_format && *preferred_format)
+			preferred_format_len = strlen(preferred_format);
+		if (preferred_format_len == 4) {
+			priv->config.preferred_format
+				= fourcc_from_string(preferred_format);
+		} else if (preferred_format_len > 0) {
+			GST_WARNING("Invalid FourCC for preferred-format: %s",
+				    preferred_format);
+		}
 	}
 
 	/* [H264], [HEVC], etc... */
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
+		gchar *pipeline_str;
+
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
-		gchar *pipeline_str
-			= g_key_file_get_string(conf_key, groups[i],
-						"pipeline", &err);
+		pipeline_str = g_key_file_get_string(conf_key, groups[i],
+						     "pipeline", &err);
 		if (err) {
 			GST_ERROR("GStreamer pipeline is not specified");
 			if (err) g_error_free(err);
@@ -493,8 +512,10 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	const GValue *val, *list_val;
 	const gchar *fmt_str;
 	GstVideoFormat fmt;
+	guint32 preferred = priv->config.preferred_format;
 	guint i, j;
 	struct fmt color_fmt;
+	gchar fourcc_str[5];
 
 	g_array_set_size(priv->supported_cap_fmts, 0);
 
@@ -514,6 +535,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 
 	for (j = 0; j < structs; j++) {
 		gint num_cap_formats;
+
 		structure = gst_caps_get_structure(caps, j);
 		val = gst_structure_get_value(structure, "format");
 		if (!val)
@@ -544,20 +566,39 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 
 			g_strlcpy(color_fmt.desc, fmt_str, FMTDESC_NAME_LENGTH);
 
-			g_array_append_vals(priv->supported_cap_fmts, &color_fmt, 1);
+			if (preferred && color_fmt.fourcc == preferred) {
+				g_array_prepend_vals(priv->supported_cap_fmts,
+						     &color_fmt, 1);
+
+				fourcc_to_string(preferred, fourcc_str);
+				GST_DEBUG("Preferred format: %s (0x%x)",
+					  fourcc_str, preferred);
+			} else {
+				g_array_append_vals(priv->supported_cap_fmts,
+						     &color_fmt, 1);
+			}
 
 			/* Add legacy RGB formats */
 			if (color_fmt.fourcc == V4L2_PIX_FMT_ARGB32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_RGB32;
 				g_strlcpy(color_fmt.desc,
 					  "RGB4", FMTDESC_NAME_LENGTH);
-				g_array_append_vals(priv->supported_cap_fmts,
-						    &color_fmt, 1);
 			} else if (color_fmt.fourcc == V4L2_PIX_FMT_ABGR32) {
 				color_fmt.fourcc = V4L2_PIX_FMT_BGR32;
-
 				g_strlcpy(color_fmt.desc,
 					  "BGR4", FMTDESC_NAME_LENGTH);
+			} else {
+				color_fmt.fourcc = 0;
+			}
+
+			if (color_fmt.fourcc && color_fmt.fourcc == preferred) {
+				g_array_prepend_vals(priv->supported_cap_fmts,
+						     &color_fmt, 1);
+
+				fourcc_to_string(preferred, fourcc_str);
+				GST_DEBUG("Preferred format: %s (0x%x)",
+					  fourcc_str, preferred);
+			} else if (color_fmt.fourcc) {
 				g_array_append_vals(priv->supported_cap_fmts,
 						    &color_fmt, 1);
 			}
@@ -1286,6 +1327,7 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 		  struct v4l2_pix_format_mplane *pix_fmt)
 {
 	gint i;
+	gchar fourcc_str[5];
 
 	if (!g_atomic_int_get(&priv->is_cap_fmt_acquirable) ||
 		    priv->out_cnt < INPUT_BUFFERING_CNT) {
@@ -1303,8 +1345,11 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 	pix_fmt->flags = 0;
 	pix_fmt->num_planes = priv->cap_fmt.num_planes;
 
-	GST_DEBUG("width:%d height:%d num_plnaes=%d",
-		  pix_fmt->width, pix_fmt->height, pix_fmt->num_planes);
+	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+	GST_DEBUG("width:%d height:%d, format: %s (0x%x) num_plnaes=%d",
+		  pix_fmt->width, pix_fmt->height,
+		  fourcc_str, pix_fmt->pixelformat,
+		  pix_fmt->num_planes);
 
 	if (priv->cap_fmt.plane_fmt[0].sizeimage > 0) {
 		for (i = 0; i < pix_fmt->num_planes; i++) {
@@ -3446,6 +3491,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 int
 try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 {
+	gchar fourcc_str[5];
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_TRY_FMT")) {
@@ -3456,7 +3502,10 @@ try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 		return 0;
 	}
 #endif
-	GST_INFO("unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x", format->type);
+	fourcc_to_string(format->fmt.pix_mp.pixelformat, fourcc_str);
+	GST_INFO("unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x, "
+		 "pixelformat: %s (0x%x)",
+		 format->type, fourcc_str, format->fmt.pix_mp.pixelformat);
 
 	return 0;
 }

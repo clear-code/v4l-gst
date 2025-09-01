@@ -94,6 +94,14 @@ fourcc_to_mimetype(guint32 fourcc)
 	}
 }
 
+guint32
+fourcc_from_string(gchar *str)
+{
+	if (!str || !*str || strlen(str) != 4)
+		return 0;
+	return v4l2_fourcc(str[0], str[1], str[2], str[3]);
+}
+
 void
 fourcc_to_string(guint32 fourcc, gchar out[5])
 {

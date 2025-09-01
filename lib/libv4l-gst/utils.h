@@ -29,6 +29,7 @@
 guint32		fourcc_from_gst_video_format	(GstVideoFormat fmt);
 GstVideoFormat	fourcc_to_gst_video_format	(guint32 fourcc);
 const gchar*	fourcc_to_mimetype		(guint32 fourcc);
+guint32		fourcc_from_string		(gchar *fourcc_str);
 void		fourcc_to_string		(guint32 fourcc,
 						 gchar out[5]);
 const gchar*	v4l2_buffer_type_to_string	(guint type);
