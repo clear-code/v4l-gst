@@ -3470,27 +3470,91 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 	return 0;
 }
 
-/* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp.c#L297-L361 */
+static int
+try_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *format)
+{
+	struct v4l2_pix_format_mplane *pix_fmt = &format->fmt.pix_mp;
+	gchar fourcc_str[5];
+
+	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+
+	if (!is_pix_fmt_supported((struct fmt*)priv->supported_out_fmts->data,
+				  priv->supported_out_fmts->len,
+				  pix_fmt->pixelformat)) {
+		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
+			  fourcc_str, pix_fmt->pixelformat);
+
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (priv->pipeline &&
+	    priv->out_fmt.pixelformat != pix_fmt->pixelformat) {
+		gchar current[5];
+
+		fourcc_to_string(priv->out_fmt.pixelformat, current);
+		GST_ERROR("Different pixelformat with current: "
+			  "pixelformat:%s, current: %s",
+			  fourcc_str, current);
+
+		errno = EINVAL;
+		return -1;
+	}
+
+	set_params_as_encoded_stream(pix_fmt);
+
+	return 0;
+}
+
+static int
+try_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *format)
+{
+	struct v4l2_pix_format_mplane *pix_fmt = &format->fmt.pix_mp;
+
+	if (!is_pix_fmt_supported((struct fmt*)priv->supported_cap_fmts->data,
+				  priv->supported_cap_fmts->len,
+				  pix_fmt->pixelformat)) {
+		gchar fourcc_str[5];
+
+		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+		GST_ERROR("Unsupported pixelformat on CAPTURE");
+
+		errno = EINVAL;
+		return -1;
+	}
+
+	pix_fmt->field = V4L2_FIELD_NONE;
+	pix_fmt->colorspace = 0;
+	pix_fmt->flags = 0;
+
+	return 0;
+}
+
 int
 try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 {
+	int ret;
 	gchar fourcc_str[5];
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
-	if (vidioc_features && strstr(vidioc_features, "VIDIOC_TRY_FMT")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x",
-			      format->type);
-		errno = ENOTTY;
-		return 0;
-	}
-#endif
+
 	fourcc_to_string(format->fmt.pix_mp.pixelformat, fourcc_str);
-	GST_INFO("unsupported VIDIOC_TRY_FMT v4l2_format type: 0x%x, "
-		 "pixelformat: %s (0x%x)",
+	GST_DEBUG("VIDIOC_TRY_FMT: type: 0x%x, pixelformat: %s (0x%x)",
 		 format->type, fourcc_str, format->fmt.pix_mp.pixelformat);
 
-	return 0;
+	g_mutex_lock(&priv->dev_lock);
+
+	if (format->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		ret = try_fmt_ioctl_out(priv, format);
+	} else if (format->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		ret = try_fmt_ioctl_cap(priv, format);
+	} else {
+		GST_ERROR("Invalid buffer type");
+		errno = EINVAL;
+		ret = -1;
+	}
+
+	g_mutex_unlock(&priv->dev_lock);
+
+	return ret;
 }
 
 int
