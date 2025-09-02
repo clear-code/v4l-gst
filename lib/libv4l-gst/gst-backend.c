@@ -3631,19 +3631,6 @@ try_decoder_cmd_ioctl(struct v4l_gst *priv,
 {
 	int ret = 0;
 
-#ifdef ENABLE_VIDIOC_DEBUG
-	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
-	if (vidioc_features && strstr(vidioc_features, "VIDIOC_TRY_DECODER_CMD")) {
-		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported VIDIOC_TRY_DECODER_CMD v4l2_decoder_cmd: 0x%x flags: 0x%x",
-			      decoder_cmd->cmd, decoder_cmd->flags);
-		errno = ENOTTY;
-		return 0;
-	}
-#endif
-	GST_INFO("unsupported VIDIOC_TRY_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
-		 decoder_cmd->cmd, decoder_cmd->flags);
-
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3654,7 +3641,6 @@ try_decoder_cmd_ioctl(struct v4l_gst *priv,
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "v4l2_dec_cmd: V4L2_DEC_CMD_STOP pts: %llu",
 			      decoder_cmd->stop.pts);
-		// ret = set_decoder_cmd_state(priv, GST_STATE_PAUSED);
 		break;
 	case V4L2_DEC_CMD_PAUSE:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3672,6 +3658,8 @@ try_decoder_cmd_ioctl(struct v4l_gst *priv,
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
 			      "unsupported v4l2_decoder_cmd cmd: 0x%x",
 			      decoder_cmd->cmd);
+		errno = EINVAL;
+		ret = -1;
 		break;
 	}
 	return ret;
@@ -3724,7 +3712,8 @@ decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-			      "v4l2_decoder_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
+			      "v4l2_decoder_cmd: V4L2_DEC_CMD_START "
+			      "speed: %d format: %x",
 			      decoder_cmd->start.speed,
 			      decoder_cmd->start.format);
 		break;
@@ -3756,8 +3745,11 @@ decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 		break;
 	default:
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
-			      "unsupported VIDIOC_DECODER_CMD v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
+			      "unsupported VIDIOC_DECODER_CMD "
+			      "v4l2_decoder_cmd: cmd: 0x%x flags: 0x%x",
 			      decoder_cmd->cmd, decoder_cmd->flags);
+		errno = EINVAL;
+		ret = -1;
 		break;
 	}
 
