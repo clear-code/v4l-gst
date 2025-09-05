@@ -44,11 +44,10 @@ but they may be updated to use more generic settings.
 
 ```
 [libv4l-gst]
-bufferpool-library=/usr/lib/libv4l/plugins/v4l-gst-bufferpool/libv4l-gst-bufferpool-rel.so
 min-buffers=2
 
 [H264]
-pipeline=h264parse ! omxh264dec ! queue max-size-bytes=0 max-size-time=0 max-size-buffers=0 ! vspfilter
+pipeline=h264parse ! omxh264dec
 
 [HEVC]
 pipeline=h265parse ! omxh265dec
