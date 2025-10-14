@@ -12,7 +12,7 @@ Dependencies
 ============
 
 * v4lutils - with patches provide [here](https://github.com/igel-oss/v4l-utils)
-* [v4l-gst-bufferpool-rcar] (https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (i.e Porter)
+* [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (i.e Porter)
 
 Compile
 =======
