@@ -86,9 +86,13 @@ struct v4l_gst {
 	GstElement *pipeline;
 	GstElement *appsrc;
 	GstElement *appsink;
+	GstElement *decoder;
+
+	GstVideoInfo src_video_info;
 
 	GstAppSinkCallbacks appsink_cb;
 	gulong probe_id;
+	gulong decoder_probe_id;
 
 	void *pool_lib_handle;
 	struct libv4l_gst_buffer_pool_ops *pool_ops;
@@ -298,8 +302,10 @@ get_gst_elements(struct v4l_gst *priv)
 	GstElement *elem;
 	GstElementFactory *factory;
 	const gchar *elem_name;
+	const gchar *klass;
+	const gchar *decoder_klass = "Codec/Decoder/Video";
 
-	priv->appsrc = priv->appsink = NULL;
+	priv->appsrc = priv->appsink = priv->decoder = NULL;
 
 	it = gst_bin_iterate_elements(GST_BIN(priv->pipeline));
 	while (!done) {
@@ -308,13 +314,17 @@ get_gst_elements(struct v4l_gst *priv)
 			elem = g_value_get_object(&data);
 
 			factory = gst_element_get_factory(elem);
-			elem_name =
-				gst_element_factory_get_metadata(factory,
-						GST_ELEMENT_METADATA_LONGNAME);
-			if (g_strcmp0(elem_name, "AppSrc") == 0)
+			elem_name = gst_element_factory_get_metadata
+				(factory, GST_ELEMENT_METADATA_LONGNAME);
+			klass = gst_element_factory_get_metadata
+				(factory, GST_ELEMENT_METADATA_KLASS);
+			if (!g_strcmp0(elem_name, "AppSrc"))
 				priv->appsrc = elem;
-			else if (g_strcmp0(elem_name, "AppSink") == 0)
+			else if (!g_strcmp0(elem_name, "AppSink"))
 				priv->appsink = elem;
+			else if (!strncmp(klass, decoder_klass,
+					  strlen(decoder_klass)))
+				priv->decoder = elem;
 
 			g_value_reset(&data);
 			break;
@@ -722,6 +732,8 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 	GstQuery *query;
 	GstCaps *caps;
 	GstVideoInfo info;
+	guint src_width = priv->src_video_info.width;
+	guint src_height = priv->src_video_info.height;
 
 	query = GST_PAD_PROBE_INFO_QUERY (probe_info);
 	if (GST_QUERY_TYPE (query) == GST_QUERY_ALLOCATION &&
@@ -738,13 +750,16 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 			return GST_PAD_PROBE_OK;
 		}
 
-		/* Workaround: gst-omx arouses caps negotiations toward
-		   downstream twice.
-		   The first of them always has the QCIF resolution
-		   and we skip it to receive the only second query that
-		   has the actual video parameters. */
-		if (info.width == 176 && info.height == 144)
+		if ((src_width  && src_width  != info.width) ||
+		    (src_height && src_height != info.height)) {
+			/* Sometimes decoder may send iterim resolutions that
+			   differ from the original one (typically 16x16
+			   macroblock based one: e.g. 640x368 vs 640x360) before
+			   sending finally determined resolution.
+			   Skip such interim resolutions then wait original one.
+			 */
 			return GST_PAD_PROBE_OK;
+		}
 
 		retrieve_cap_format_info(priv, &info);
 		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
@@ -786,6 +801,43 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 	priv->probe_id = 0;
 
 	g_signal_handlers_disconnect_by_func(self, appsink_pad_unlinked_cb, data);
+}
+
+static GstPadProbeReturn
+decoder_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
+{
+	struct v4l_gst *priv = user_data;
+	GstPadProbeType type = GST_PAD_PROBE_INFO_TYPE(probe_info);
+	GstEvent *event;
+	GstCaps *caps = NULL;
+
+	if (!(type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM))
+		return GST_PAD_PROBE_OK;
+
+	event = GST_PAD_PROBE_INFO_EVENT(probe_info);
+	if (GST_EVENT_TYPE(event) != GST_EVENT_CAPS)
+		return GST_PAD_PROBE_OK;
+
+	gst_event_parse_caps(event, &caps);
+	if (!caps)
+		return GST_PAD_PROBE_OK;
+
+	if (!gst_video_info_from_caps(&priv->src_video_info, caps))
+		return GST_PAD_PROBE_OK;
+
+	GST_DEBUG("Source video info: %" GST_PTR_FORMAT, caps);
+
+	return GST_PAD_PROBE_OK;
+}
+
+static void
+decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
+{
+	struct v4l_gst *priv = data;
+
+	GST_DEBUG("clear decoder_probe_id");
+	priv->decoder_probe_id = 0;
+	g_signal_handlers_disconnect_by_func(self, decoder_pad_unlinked_cb, data);
 }
 
 static gulong
@@ -897,6 +949,19 @@ init_app_elements(struct v4l_gst *priv)
 
 	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
 				   &priv->appsink_cb, priv, NULL);
+
+	if (priv->decoder) {
+		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
+
+		g_signal_connect(G_OBJECT(pad), "unlinked",
+				 G_CALLBACK(decoder_pad_unlinked_cb), priv);
+		priv->decoder_probe_id
+			= gst_pad_add_probe(pad,
+					    GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+					    decoder_sink_pad_probe,
+					    priv, NULL);
+		gst_object_unref(pad);
+	}
 
 	return TRUE;
 }
@@ -1045,6 +1110,12 @@ gst_backend_deinit(struct v4l_gst *priv)
 	}
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
+
+	if (priv->decoder_probe_id) {
+		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
+		gst_pad_remove_probe(pad, priv->decoder_probe_id);
+		gst_object_unref(pad);
+	}
 
 	if (priv->probe_id)
 		remove_query_pad_probe(priv->appsink, priv->probe_id);
