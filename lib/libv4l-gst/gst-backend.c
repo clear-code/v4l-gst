@@ -1166,10 +1166,8 @@ querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
 	GST_DEBUG("VIDIOC_QUERYCAP");
 
 	cap->device_caps = V4L2_CAP_VIDEO_M2M_MPLANE
-#ifdef ENABLE_CHROMIUM_COMPAT
 			| V4L2_CAP_VIDEO_CAPTURE_MPLANE
 			| V4L2_CAP_VIDEO_OUTPUT_MPLANE
-#endif
 			| V4L2_CAP_EXT_PIX_FORMAT
 			| V4L2_CAP_STREAMING;
 
