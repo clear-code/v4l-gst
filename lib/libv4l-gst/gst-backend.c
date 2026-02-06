@@ -878,14 +878,15 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 	struct v4l_gst *priv = user_data;
 	if (priv->eos_gstbuf)
 		release_out_buffer(priv, priv->eos_gstbuf);
-	priv->eos_state = EOS_GOT;
 	g_mutex_lock(&priv->queue_mutex);
+	GST_DEBUG("EOS: Got from AppSink. Cached buffers: %u",
+		  g_queue_get_length(priv->cap_gstbufs_queue));
+	priv->eos_state = EOS_GOT;
 	if (priv->cap_gstbufs_queue &&
 	    !g_queue_is_empty(priv->cap_gstbufs_queue)) {
-	    set_event(priv->event_state, POLLOUT);
+		set_event(priv->event_state, POLLOUT);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
-	GST_DEBUG("Got EOS event");
 }
 
 static GstFlowReturn
@@ -910,8 +911,10 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 	g_queue_push_tail(queue, gstbuf);
 	len = g_queue_get_length(queue);
 
-	if (len == 2 || (len == 1 && priv->eos_state == EOS_GOT)) {
+	if (len > 1 || priv->eos_state == EOS_GOT) {
 		/* cache 1 buffer to detect EOS */
+		if (len == 0 && priv->eos_state == EOS_GOT)
+			GST_DEBUG("EOS: Flush last frame");
 		g_cond_signal(&priv->queue_cond);
 		set_event(priv->event_state, POLLOUT);
 	} else if (!priv->cap_buffers) {
@@ -1946,7 +1949,7 @@ fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    priv->eos_state == EOS_GOT &&
 	    g_queue_is_empty(priv->cap_gstbufs_queue)) {
-		GST_DEBUG("Set V4L2_BUF_FLAG_LAST");
+		GST_DEBUG("EOS: Set V4L2_BUF_FLAG_LAST");
 		v4l2buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
 		clear_event(priv->event_state, POLLOUT);
@@ -3796,6 +3799,7 @@ decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 		   ref: https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/dev-decoder.html#drain
 		*/
 		if (priv->eos_state == EOS_NONE) {
+			GST_DEBUG("EOS: Send to AppSrc");
 			priv->eos_state = EOS_WAITING_DECODE;
 			gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
 		}
