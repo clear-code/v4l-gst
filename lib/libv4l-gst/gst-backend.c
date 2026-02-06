@@ -2012,32 +2012,31 @@ dequeue_non_blocking(GQueue *queue)
 }
 
 static GstBuffer *
-dequeue_buffer(struct v4l_gst *priv, GQueue *queue, GCond *cond,
-		int type)
+dequeue_cap_buffer(struct v4l_gst *priv)
 {
+	GQueue *queue = priv->cap_gstbufs_queue;
 	GstBuffer *gstbuf = NULL;
+	guint len;
 
 	g_mutex_lock(&priv->queue_mutex);
+
+	/* Cache 1 buffer to detect EOS */
+	len = g_queue_get_length(queue);
+	if (priv->eos_state != EOS_GOT && len == 1)
+		goto unlock;
 
 	if (priv->is_non_blocking)
 		gstbuf = dequeue_non_blocking(queue);
 	else
-		gstbuf = dequeue_blocking(priv, queue, cond);
+		gstbuf = dequeue_blocking(priv, queue, &priv->queue_cond);
 
 	if (!gstbuf)
 		goto unlock;
 
-	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		if (priv->returned_out_buffers_num == 0)
-			clear_event(priv->event_state, POLLIN);
-	} else if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		guint len = g_queue_get_length(priv->cap_gstbufs_queue);
-
-		/* cache 1 buffer to detect EOS */
-		if ((priv->eos_state != EOS_GOT && len == 1) || len == 0) {
-			clear_event(priv->event_state, POLLOUT);
-		}
-	}
+	/* Cache 1 buffer to detect EOS */
+	len = g_queue_get_length(queue);
+	if ((priv->eos_state != EOS_GOT && len == 1) || len == 0)
+		clear_event(priv->event_state, POLLOUT);
 
  unlock:
 	g_mutex_unlock(&priv->queue_mutex);
@@ -2140,8 +2139,7 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 					priv->sink_pool))
 		return -1;
 
-	gstbuf = dequeue_buffer(priv, priv->cap_gstbufs_queue,
-				&priv->queue_cond, v4l2buf->type);
+	gstbuf = dequeue_cap_buffer(priv);
 	if (!gstbuf)
 		return -1;
 
