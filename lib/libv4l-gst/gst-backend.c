@@ -47,6 +47,7 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_debug_category);
 #define GST_CAT_DEFAULT v4l_gst_debug_category
 
 GST_DEBUG_CATEGORY_STATIC(v4l_gst_ioctl_debug_category);
+GST_DEBUG_CATEGORY_STATIC(v4l_gst_buffer_debug_category);
 
 #define DEF_CAP_MIN_BUFFERS		2
 #define INPUT_BUFFERING_CNT		16 // must be <= than VIDEO_MAX_FRAME
@@ -899,7 +900,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	gstbuf = pull_buffer_from_sample(appsink);
 
-	GST_TRACE("pull buffer: %p", gstbuf);
+	GST_CAT_DEBUG(v4l_gst_buffer_debug_category, "pull buffer: %p", gstbuf);
 
 	if (priv->cap_buffers)
 		queue = priv->cap_gstbufs_queue;
@@ -1016,6 +1017,9 @@ gst_backend_init(int fd)
 		GST_DEBUG_CATEGORY_INIT(v4l_gst_ioctl_debug_category,
 					"v4l-gst-ioctl", 0,
 					"debug category for v4l-gst IOCTL operation");
+		GST_DEBUG_CATEGORY_INIT(v4l_gst_buffer_debug_category,
+					"v4l-gst-buffer", 0,
+					"debug buffers of v4l-gst");
 		gstreamer_initialized = TRUE;
 	}
 
@@ -1779,8 +1783,10 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	gst_buffer_unmap(buffer->gstbuf, &info);
 
-	GST_TRACE("buffer rewrap ts=%ld", v4l2buf->timestamp.tv_sec);
 	GST_BUFFER_PTS(wrapped_gstbuf) = GST_TIMEVAL_TO_TIME(v4l2buf->timestamp);
+	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+		      "buffer rewrap ts=%" G_GINT64_FORMAT "msec",
+		      GST_BUFFER_PTS(wrapped_gstbuf) / 1000000);
 
 	buffer->state = V4L_GST_BUFFER_QUEUED;
 
@@ -2158,8 +2164,6 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	for (i = 0; i < priv->cap_fmt.num_planes; i++)
 		bytesused[i] = priv->cap_fmt.plane_fmt[i].sizeimage;
 
-	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
-
 	if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
 		/* It might be occurred when a buffer is unexpectedly queued
 		   after streamoff_ioctl_out(). In this case reference count of
@@ -2170,8 +2174,12 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	}
 	priv->cap_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
-	GST_TRACE("success dequeue buffer index=%d gstbuf=%p ts=%ld",
-		  index, gstbuf, timestamp.tv_sec);
+	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+		      "success dequeue buffer index=%d gstbuf=%p ts=%"
+		      G_GINT64_FORMAT "msec",
+		      index, gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
+
+	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
 
 	return fill_v4l2_buffer(priv, priv->sink_pool,
 				priv->cap_buffers, priv->cap_buffers_num,
