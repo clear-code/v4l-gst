@@ -54,6 +54,8 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_buffer_debug_category);
 
 #define FMTDESC_NAME_LENGTH		32  //The same size as defined int the V4L2 spec
 
+#define SEEK_DELAY_MSEC_DEFAULT		800
+
 enum buffer_state {
 	V4L_GST_BUFFER_QUEUED,
 	V4L_GST_BUFFER_DEQUEUED,
@@ -141,6 +143,7 @@ struct v4l_gst {
 		gint max_width;
 		gint max_height;
 		guint32 preferred_format;
+		guint32 seek_delay_msec;
 		gchar *h264_pipeline;
 		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
@@ -152,6 +155,8 @@ struct v4l_gst {
 		guint32 sequence;
 		GQueue *queue;
 	} v4l2events;
+
+	gint64 last_streamoff;
 
 	GMutex dev_lock;
 };
@@ -179,6 +184,7 @@ parse_config_file(struct v4l_gst *priv)
 			  "from the xdg system config directory retrieved from "
 			  "XDG_CONFIG_DIRS (%s)", conf_name, err->message);
 		g_error_free(err);
+		err = NULL;
 		goto free_key_file;
 	}
 
@@ -228,6 +234,14 @@ parse_config_file(struct v4l_gst *priv)
 			GST_WARNING("Invalid FourCC for preferred-format: %s",
 				    preferred_format);
 		}
+		priv->config.seek_delay_msec
+			= g_key_file_get_integer(conf_key, libv4l_gst_group,
+						 "seek-delay", &err);
+		if (err) {
+			priv->config.seek_delay_msec = SEEK_DELAY_MSEC_DEFAULT;
+			g_error_free(err);
+			err = NULL;
+		}
 	}
 
 	/* [H264], [HEVC], etc... */
@@ -244,7 +258,7 @@ parse_config_file(struct v4l_gst *priv)
 						     "pipeline", &err);
 		if (err) {
 			GST_ERROR("GStreamer pipeline is not specified");
-			if (err) g_error_free(err);
+			g_error_free(err);
 			err = NULL;
 			continue;
 		}
@@ -2520,6 +2534,8 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 {
 	int ret;
 
+	priv->last_streamoff = g_get_monotonic_time();
+
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		/* No need to flush the pipeline after it has been
@@ -3005,6 +3021,15 @@ static int
 streamon_ioctl_out(struct v4l_gst *priv)
 {
 	GstState state;
+
+	/* work around flush back issue on continuous seek */
+	if (priv->last_streamoff && priv->config.seek_delay_msec) {
+		gint64 elapsed = priv->last_streamoff - g_get_monotonic_time();
+		gint64 seek_delay_usec = priv->config.seek_delay_msec * 1000;
+
+		if (elapsed < seek_delay_usec)
+			g_usleep(seek_delay_usec);
+	}
 
 	if (priv->is_pipeline_started) {
 		GST_ERROR("The pipeline is already running");
