@@ -406,7 +406,8 @@ get_peer_pad(GstElement *elem, const gchar *pad_name, gboolean skip_queue)
 		holder = gst_pad_get_parent_element(peer_pad);
 		name = gst_element_get_metadata(holder,
 						GST_ELEMENT_METADATA_LONGNAME);
-		if (skip_queue && !strcmp("Queue", name)) {
+		if (skip_queue && (!strcmp("Queue", name) ||
+				   !strcmp("Tee pipe fitting", name))) {
 			g_object_unref(element);
 			g_object_unref(peer_pad);
 			peer_pad = NULL;
