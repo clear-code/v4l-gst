@@ -270,14 +270,25 @@ free_key_file:
 }
 
 static GstElement *
-create_pipeline(gchar *pipeline_str)
+create_pipeline(const gchar *pipeline_str)
 {
+	const gchar *format_str;
 	gchar *launch_str;
 	GstElement *pipeline;
 	GError *err = NULL;
+	gboolean has_appsrc = !!strstr(pipeline_str, "appsrc");
+	gboolean has_appsink = !!strstr(pipeline_str, "appsink");
 
-	launch_str = g_strdup_printf("appsrc ! %s ! appsink sync=false",
-				     pipeline_str);
+	if (has_appsrc && has_appsink)
+		format_str = "%s";
+	else if (has_appsrc)
+		format_str = "%s ! appsink";
+	else if (has_appsink)
+		format_str = "appsrc ! %s";
+	else
+		format_str = "appsrc ! %s ! appsink";
+
+	launch_str = g_strdup_printf(format_str, pipeline_str);
 
 	GST_DEBUG("gst_parse_launch: %s", launch_str);
 
@@ -950,6 +961,8 @@ init_app_elements(struct v4l_gst *priv)
 	/* Set the appsrc queue size to unlimited.
 	   The amount of buffers is managed by the buffer pool. */
 	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
+
+	gst_base_sink_set_sync(GST_BASE_SINK(priv->appsink), FALSE);
 
 	priv->appsink_cb.new_sample = appsink_callback_new_sample;
 	priv->appsink_cb.eos = appsink_callback_eos;
