@@ -900,7 +900,9 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	gstbuf = pull_buffer_from_sample(appsink);
 
-	GST_CAT_DEBUG(v4l_gst_buffer_debug_category, "pull buffer: %p", gstbuf);
+	GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
+		      "pull buffer from appsink: gstbuf=%p, pts=%lu",
+		      gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
 
 	if (priv->cap_buffers)
 		queue = priv->cap_gstbufs_queue;
@@ -1785,7 +1787,8 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	GST_BUFFER_PTS(wrapped_gstbuf) = GST_TIMEVAL_TO_TIME(v4l2buf->timestamp);
 	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
-		      "buffer rewrap ts=%" G_GINT64_FORMAT "msec",
+		      "QBUF OUT: gstbuf=%p, index=%d, pts=%lu",
+		      wrapped_gstbuf, v4l2buf->index,
 		      GST_BUFFER_PTS(wrapped_gstbuf) / 1000000);
 
 	buffer->state = V4L_GST_BUFFER_QUEUED;
@@ -1840,6 +1843,9 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 
 	buffer = &priv->cap_buffers[v4l2buf->index];
+	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+		      "QBUF CAP: gstbuf=%p, index=%d",
+		      buffer->gstbuf, v4l2buf->index);
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
 		GST_ERROR("Buffer %u is already queued", v4l2buf->index);
@@ -2125,7 +2131,9 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	v4l2buf->index = index;
 	priv->out_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
-	GST_TRACE("success dequeue buffer index=%d buffer=%p", index, gstbuf);
+	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+		      "DQBUF OUT: gstbuf=%p, index=%d",
+		      gstbuf, index);
 
 	return fill_v4l2_buffer(priv, priv->src_pool,
 				priv->out_buffers, priv->out_buffers_num,
@@ -2175,9 +2183,8 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	priv->cap_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
 	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
-		      "success dequeue buffer index=%d gstbuf=%p ts=%"
-		      G_GINT64_FORMAT "msec",
-		      index, gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
+		      "DQBUF CAP: gstbuf=%p, index=%d, pts=%lu",
+		      gstbuf, index, GST_BUFFER_PTS(gstbuf) / 1000000);
 
 	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
 
@@ -2520,6 +2527,9 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 {
 	int ret;
 
+	GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
+		      "STREAMOFF OUT begin: dequeue all OUT & CAP buffers ...");
+
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		/* No need to flush the pipeline after it has been
@@ -2564,6 +2574,8 @@ flush_buffer_queues:
 	priv->is_pipeline_started = FALSE;
 	g_cond_broadcast(&priv->queue_cond);
 	g_mutex_unlock(&priv->queue_mutex);
+
+	GST_CAT_DEBUG(v4l_gst_buffer_debug_category, "STREAMOFF OUT end");
 
 	return 0;
 }
