@@ -1639,6 +1639,7 @@ static gboolean
 is_supported_memory_io(enum v4l2_memory memory)
 {
 	if (memory != V4L2_MEMORY_MMAP) {
+		GST_ERROR("Only V4L2_MEMORY_MMAP is supported");
 		errno = EINVAL;
 		return FALSE;
 	}
@@ -2604,10 +2605,8 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 	int ret;
 	guint i;
 
-	if (!is_supported_memory_io(req->memory)) {
-		GST_ERROR("Only V4L2_MEMORY_MMAP is supported");
+	if (!is_supported_memory_io(req->memory))
 		return -1;
-	}
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -2852,10 +2851,8 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 	int ret;
 	gint i;
 
-	if (!is_supported_memory_io(req->memory)) {
-		GST_ERROR("Only V4L2_MEMORY_MMAP is supported");
+	if (!is_supported_memory_io(req->memory))
 		return -1;
-	}
 
 	g_mutex_lock(&priv->dev_lock);
 
