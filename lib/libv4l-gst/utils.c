@@ -19,6 +19,8 @@
 #include "utils.h"
 
 #include <linux/videodev2.h>
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 
 struct v4l_gst_format_info {
 	guint fourcc;
@@ -173,4 +175,98 @@ v4l2_event_type_to_string(guint type)
 	default:
 		return NULL;
 	}
+}
+
+void dmabuf_sync_start(int fd)
+{
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ
+    };
+    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+}
+
+void dmabuf_sync_end(int fd)
+{
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ
+    };
+    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+}
+
+static guint32 crc32_table[256];
+static int crc32_table_initialized = 0;
+
+static void crc32_init_table(void)
+{
+	for (guint32 i = 0; i < 256; i++) {
+		guint32 c = i;
+		for (int j = 0; j < 8; j++) {
+			if (c & 1)
+				c = 0xEDB88320U ^ (c >> 1);
+			else
+				c >>= 1;
+		}
+		crc32_table[i] = c;
+	}
+	crc32_table_initialized = 1;
+}
+
+guint32 crc32_calc(const void *data, size_t len)
+{
+	if (!crc32_table_initialized)
+		crc32_init_table();
+
+	const guint8 *p = (const guint8 *)data;
+	guint32 crc = 0xFFFFFFFFU;
+
+	for (size_t i = 0; i < len; i++)
+		crc = crc32_table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
+
+	return crc ^ 0xFFFFFFFFU;
+}
+
+guint32 crc32_sampled(const guint8 *data, size_t len)
+{
+	size_t chunk = 4096;
+	guint32 crc = 0;
+
+	if (len > chunk)
+		crc ^= crc32_calc(data, chunk);
+
+	if (len > chunk * 2)
+		crc ^= crc32_calc(data + len/2, chunk);
+
+	if (len > chunk * 3)
+		crc ^= crc32_calc(data + len - chunk, chunk);
+
+	return crc;
+}
+
+guint32
+frame_crc32(GstBuffer *gstbuf, FrameCheckType type)
+{
+	GstMemory *mem;
+	int fd;
+	GstMapInfo info;
+	guint32 crc;
+
+	if (type != FRAME_CHECK_LIGHT && type != FRAME_CHECK_FULL)
+		return 0xFFFF;
+
+	mem = gst_buffer_peek_memory(gstbuf, 0);
+	if (!gst_is_dmabuf_memory(mem))
+		return 0xFFFF;
+
+	fd = gst_dmabuf_memory_get_fd (mem);
+
+	dmabuf_sync_start(fd);
+	gst_buffer_map(gstbuf, &info, GST_MAP_READ);
+	if (type == FRAME_CHECK_FULL)
+		crc = crc32_calc(info.data, info.size);
+	else
+		crc = crc32_sampled(info.data, info.size);
+	gst_buffer_unmap(gstbuf, &info);
+	dmabuf_sync_end(fd);
+
+	return crc;
 }

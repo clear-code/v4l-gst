@@ -36,6 +36,7 @@ COLUMNS = [
   *CAP_PORT_NUM.times.collect { |i| "CAP_#{i}" },
   "pts CAP DQBUF",
   "pts CAP QBUF",
+  "CRC",
 ]
 
 queued_buffers = { "OUT" => Set[], "CAP" => Set[] }
@@ -68,20 +69,22 @@ def parse_line(line)
   line = strip_escape_sequence(line)
 
   # e.g.) 0:00:00.994448355 ... qbuf_ioctl_out: QBUF OUT: gstbuf=0x2c025f18e0, index=5, pts=633
-  if line =~ /^(\d+:\d+:\d+\.\d+).*:(?:qbuf|dqbuf)_ioctl_(?:out|cap): (QBUF|DQBUF) (OUT|CAP): gstbuf=(0x[a-f0-9]+), index=(\d+)(?:, pts=(\d+))?/
+  if line =~ /^(\d+:\d+:\d+\.\d+).*:(?:qbuf|dqbuf)_ioctl_(?:out|cap): (QBUF|DQBUF) (OUT|CAP): gstbuf=(0x[a-f0-9]+), index=(\d+)(?:, pts=(\d+))?(?:, crc=(\d+))?/
     table["time"] = $1
     table["event"] = $2
     table["port"] = $3
     table["gstbuf"] = $4
     table["index"] = $5
     table["pts"] = $6
+    table["crc"] = $7
 
   # e.g.) 0:00:07.641034757 ... appsink_callback_new_sample: pull buffer from appsink: gstbuf=0x2c025f1d60, pts=533
-  elsif line =~ /^(\d+:\d+:\d+\.\d+).*:appsink_callback_new_sample: pull buffer from appsink: gstbuf=(0x[a-f0-9]+), pts=(\d+)/
+  elsif line =~ /^(\d+:\d+:\d+\.\d+).*:appsink_callback_new_sample: pull buffer from appsink: gstbuf=(0x[a-f0-9]+), pts=(\d+)(?:, crc=(\d+))?/
     table["time"] = $1
     table["event"] = "APPSINK_PULL"
     table["gstbuf"] = $2
     table["pts"] = $3
+    table["crc"] = $4
 
   # e.g.) 0:00:22.692462674 ... :streamoff_ioctl_out: STREAMOFF OUT begin: dequeue all OUT & CAP buffers
   # e.g.) 0:00:22.692462674 ... :streamoff_ioctl_out: STREAMOFF OUT end
@@ -104,6 +107,7 @@ ARGF.each_line do |line|
   port = row["port"]
   buffer_index = row["index"]
   pts = row["pts"]
+  crc = row["crc"]
 
   initial_val = case row["event"]
                 when "STREAMOFF_BEGIN"
@@ -123,15 +127,18 @@ ARGF.each_line do |line|
   when "APPSINK_PULL"
     columns[COLUMNS.index("APPSINK")] = "P"
     columns[COLUMNS.index("pts APPSINK")] = pts if pts
+    columns[COLUMNS.index("CRC")] = crc if crc
   when "QBUF"
     columns[buf_column_index(port, buffer_index)] = "Q"
     queued_buffers[port] << buffer_index
     columns[COLUMNS.index("pts OUT")] = pts if port == "OUT" && pts
     columns[COLUMNS.index("pts CAP QBUF")] = pts if port == "CAP" && pts
+    columns[COLUMNS.index("CRC")] = crc if crc
   when "DQBUF"
     columns[buf_column_index(port, buffer_index)] = "D"
     queued_buffers[port].delete(buffer_index)
     columns[COLUMNS.index("pts CAP DQBUF")] = pts if port == "CAP" && pts
+    columns[COLUMNS.index("CRC")] = crc if crc
   end
 
   queued_buffers.each do |port, buf_indexes|

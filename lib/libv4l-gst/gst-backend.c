@@ -144,6 +144,7 @@ struct v4l_gst {
 		gchar *h264_pipeline;
 		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
+		FrameCheckType frame_check;
 	} config;
 
 	struct {
@@ -155,6 +156,8 @@ struct v4l_gst {
 
 	GMutex dev_lock;
 };
+
+G_DEFINE_QUARK(cap_buf_crc, cap_buf_crc)
 
 static gboolean
 parse_config_file(struct v4l_gst *priv)
@@ -188,6 +191,7 @@ parse_config_file(struct v4l_gst *priv)
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
 		gchar *preferred_format;
 		guint preferred_format_len = 0;
+		const gchar *frame_check;
 
 		/* No need to check if the external bufferpool library is set,
 		   because it is not mandatory for this plugin. */
@@ -227,6 +231,18 @@ parse_config_file(struct v4l_gst *priv)
 		} else if (preferred_format_len > 0) {
 			GST_WARNING("Invalid FourCC for preferred-format: %s",
 				    preferred_format);
+		}
+
+		frame_check = getenv("V4L_GST_FRAME_CHECK");
+		if (frame_check) {
+			if (!strcmp("1", frame_check) ||
+			    !strcasecmp("light", frame_check) ||
+			    !strcasecmp("true", frame_check) ||
+			    !strcasecmp("enable", frame_check))
+				priv->config.frame_check = FRAME_CHECK_LIGHT;
+			else if (!strcmp("2", frame_check) ||
+				 !strcasecmp("full", frame_check))
+				priv->config.frame_check = FRAME_CHECK_FULL;
 		}
 	}
 
@@ -912,9 +928,23 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	gstbuf = pull_buffer_from_sample(appsink);
 
-	GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
-		      "pull buffer from appsink: gstbuf=%p, pts=%lu",
-		      gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
+	if (priv->config.frame_check && gst_buffer_n_memory(gstbuf)) {
+		guint32 crc;
+
+		crc = frame_crc32(gstbuf, priv->config.frame_check);
+		gst_mini_object_set_qdata(GST_MINI_OBJECT(gstbuf),
+					  cap_buf_crc_quark(),
+					  GUINT_TO_POINTER(crc),
+					  NULL);
+		GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
+			      "pull buffer from appsink:"
+			      " gstbuf=%p, pts=%lu, crc=%u",
+			      gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000, crc);
+	} else {
+		GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
+			      "pull buffer from appsink: gstbuf=%p, pts=%lu",
+			      gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
+	}
 
 	if (priv->cap_buffers)
 		queue = priv->cap_gstbufs_queue;
@@ -1857,10 +1887,30 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 
 	buffer = &priv->cap_buffers[v4l2buf->index];
-	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
-		      "QBUF CAP: gstbuf=%p, index=%d, pts=%lu",
-		      buffer->gstbuf, v4l2buf->index,
-		      GST_BUFFER_PTS(buffer->gstbuf) / 1000000);
+
+	if (priv->config.frame_check && gst_buffer_n_memory(buffer->gstbuf)) {
+		gpointer crc_p;
+		guint32 crc, crc_dest;
+
+		crc_p = gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer->gstbuf),
+						  cap_buf_crc_quark());
+		crc = GPOINTER_TO_UINT(crc_p);
+		crc_dest = frame_crc32(buffer->gstbuf,
+				       priv->config.frame_check);
+		GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+			      "QBUF CAP: gstbuf=%p, index=%d, pts=%lu, crc=%u",
+			      buffer->gstbuf, v4l2buf->index,
+			      GST_BUFFER_PTS(buffer->gstbuf) / 1000000, crc);
+		if (crc && crc_dest != crc)
+			GST_CAT_WARNING(v4l_gst_buffer_debug_category,
+					"crc is changed!: src=%u, dest=%u",
+					crc, crc_dest);
+	} else {
+		GST_CAT_TRACE(v4l_gst_buffer_debug_category,
+			      "QBUF CAP: gstbuf=%p, index=%d, pts=%lu",
+			      buffer->gstbuf, v4l2buf->index,
+			      GST_BUFFER_PTS(buffer->gstbuf) / 1000000);
+	}
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
 		GST_ERROR("Buffer %u is already queued", v4l2buf->index);
