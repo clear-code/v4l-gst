@@ -260,7 +260,7 @@ parse_config_file(struct v4l_gst *priv)
 	}
 
 	g_strfreev(groups);
-free_key_file:
+ free_key_file:
 	g_key_file_free(conf_key);
 
 	if (n_pipelines == 0)
@@ -770,7 +770,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 			   macroblock based one: e.g. 640x368 vs 640x360) before
 			   sending finally determined resolution.
 			   Skip such interim resolutions then wait original one.
-			 */
+			*/
 			return GST_PAD_PROBE_OK;
 		}
 
@@ -793,7 +793,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   to override it.
 		   e.g.)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
-		 */
+		*/
 		set_buffer_pool_params(priv->sink_pool, caps, info.size,
 				       0, priv->cap_buffers_num);
 
@@ -1008,7 +1008,7 @@ init_buffer_pool(struct v4l_gst *priv)
 	return TRUE;
 
 	/* error cases */
-free_pool:
+ free_pool:
 	if (priv->src_pool)
 		gst_object_unref(priv->src_pool);
 	if (priv->sink_pool)
@@ -1094,7 +1094,7 @@ gst_backend_init(int fd)
 	GST_DEBUG("Initialized gst backend");
 	return priv;
 
-error:
+ error:
 	if (priv->supported_out_fmts)
 		g_array_free(priv->supported_out_fmts, TRUE);
 	if (priv->supported_cap_fmts)
@@ -1188,11 +1188,12 @@ querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
 {
 	GST_DEBUG("VIDIOC_QUERYCAP");
 
-	cap->device_caps = V4L2_CAP_VIDEO_M2M_MPLANE
-			| V4L2_CAP_VIDEO_CAPTURE_MPLANE
-			| V4L2_CAP_VIDEO_OUTPUT_MPLANE
-			| V4L2_CAP_EXT_PIX_FORMAT
-			| V4L2_CAP_STREAMING;
+	cap->device_caps =
+		V4L2_CAP_VIDEO_M2M_MPLANE |
+		V4L2_CAP_VIDEO_CAPTURE_MPLANE |
+		V4L2_CAP_VIDEO_OUTPUT_MPLANE |
+		V4L2_CAP_EXT_PIX_FORMAT |
+		V4L2_CAP_STREAMING;
 
 	cap->capabilities = cap->device_caps | V4L2_CAP_DEVICE_CAPS;
 
@@ -1307,7 +1308,7 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	return 0;
 
-error:
+ error:
 	if (priv->cap_gstbufs_queue) {
 		g_queue_free(priv->cap_gstbufs_queue);
 		priv->cap_gstbufs_queue = NULL;
@@ -1410,7 +1411,7 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 	gchar fourcc_str[5];
 
 	if (!g_atomic_int_get(&priv->is_cap_fmt_acquirable) ||
-		    priv->out_cnt < INPUT_BUFFERING_CNT) {
+	    priv->out_cnt < INPUT_BUFFERING_CNT) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1434,11 +1435,9 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 	if (priv->cap_fmt.plane_fmt[0].sizeimage > 0) {
 		for (i = 0; i < pix_fmt->num_planes; i++) {
 			pix_fmt->plane_fmt[i].sizeimage =
-					priv->
-					cap_fmt.plane_fmt[i].sizeimage;
+				priv->cap_fmt.plane_fmt[i].sizeimage;
 			pix_fmt->plane_fmt[i].bytesperline =
-					priv->
-					cap_fmt.plane_fmt[i].bytesperline;
+				priv->cap_fmt.plane_fmt[i].bytesperline;
 		}
 		pix_fmt->num_planes = priv->cap_fmt.num_planes;
 	} else {
@@ -1508,7 +1507,7 @@ enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 
 	desc->pixelformat = fmts[desc->index].fourcc;
 	g_strlcpy((gchar *)desc->description, fmts[desc->index].desc,
-		   sizeof(desc->description));
+		  sizeof(desc->description));
 	memset(desc->reserved, 0, sizeof(desc->reserved));
 	fourcc_to_string(desc->pixelformat, fourcc_str);
 	GST_DEBUG("  description: %s pixelformat: %s (0x%x)",
@@ -1792,11 +1791,11 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 	}
 
-	wrapped_gstbuf = gst_buffer_new_wrapped_full(
-					GST_MEMORY_FLAG_READONLY, info.data,
-					v4l2buf->m.planes[0].bytesused, 0,
-					v4l2buf->m.planes[0].bytesused,
-					buffer, notify_unref);
+	wrapped_gstbuf =
+		gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY, info.data,
+					    v4l2buf->m.planes[0].bytesused, 0,
+					    v4l2buf->m.planes[0].bytesused,
+					    buffer, notify_unref);
 
 	gst_buffer_unmap(buffer->gstbuf, &info);
 
@@ -1808,8 +1807,8 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	buffer->state = V4L_GST_BUFFER_QUEUED;
 
-	flow_ret = gst_app_src_push_buffer(
-			GST_APP_SRC(priv->appsrc), wrapped_gstbuf);
+	flow_ret = gst_app_src_push_buffer(GST_APP_SRC(priv->appsrc),
+					   wrapped_gstbuf);
 	if (flow_ret != GST_FLOW_OK) {
 		GST_ERROR("Failed to push a buffer to the pipeline on OUTPUT"
 			  "(index=%d)", v4l2buf->index);
@@ -1818,7 +1817,7 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	}
 
 	if (priv->out_cnt < INPUT_BUFFERING_CNT)
-	    priv->out_cnt++;
+		priv->out_cnt++;
 
 	return 0;
 }
@@ -2327,14 +2326,14 @@ set_mem_offset(struct v4l_gst_buffer *buffer, GstBufferPool *pool, gsize offset)
 		/* deal with this as a single plane */
 		buffer->planes[0].m.mem_offset = offset;
 		return PAGE_ALIGN(gst_buffer_get_size(buffer->gstbuf),
-			page_size) + offset;
+				  page_size) + offset;
 	}
 
 	if (meta) {
 		for (i = 0; i < meta->n_planes; i++) {
 			buffer->planes[i].m.mem_offset = offset;
 			offset += PAGE_ALIGN(calc_plane_size(&info, meta, i),
-				page_size);
+					     page_size);
 		}
 	}
 
@@ -2393,13 +2392,13 @@ alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 	return actual_max_buffers;
 
 	/* error cases */
-free_bufs_list:
+ free_bufs_list:
 	for (i = 0; i < actual_max_buffers; i++) {
 		if (bufs_list[i].gstbuf)
 			gst_buffer_unref(bufs_list[i].gstbuf);
 	}
 	g_free(bufs_list);
-inactivate_pool:
+ inactivate_pool:
 	gst_buffer_pool_set_active(pool, FALSE);
 
 	return 0;
@@ -2448,7 +2447,7 @@ force_out_dqbuf(struct v4l_gst *priv)
 	g_mutex_lock(&priv->queue_mutex);
 
 	while (force_dqbuf_from_pool(priv->src_pool, priv->out_buffers,
-			   priv->out_buffers_num, TRUE) == GST_FLOW_OK) {
+				     priv->out_buffers_num, TRUE) == GST_FLOW_OK) {
 		priv->returned_out_buffers_num--;
 	}
 
@@ -2470,8 +2469,8 @@ force_cap_dqbuf(struct v4l_gst *priv)
 	do {
 		g_mutex_lock(&priv->queue_mutex);
 		gstbuf = dequeue_non_blocking(priv->cap_gstbufs_queue);
-		 /* This function may set errno but not need to expose it to
-		    clients in this case */
+		/* This function may set errno but not need to expose it to
+		   clients in this case */
 		errno = 0;
 		g_mutex_unlock(&priv->queue_mutex);
 
@@ -2560,7 +2559,7 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	if (ret < 0)
 		return ret;
 
-flush_buffer_queues:
+ flush_buffer_queues:
 	/* Vacate the buffers queues to make them available in the next time */
 	ret = force_out_dqbuf(priv);
 	if (ret < 0)
@@ -2682,11 +2681,11 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		   a V4L2 buffer in the V4L2 caller side. */
 		priv->mmap_offset =
 			set_mem_offset(&priv->out_buffers[i],
-			priv->src_pool,
-			priv->mmap_offset);
+				       priv->src_pool,
+				       priv->mmap_offset);
 
 		priv->out_buffers[i].planes[0].length =
-				gst_buffer_get_size(priv->out_buffers[i].gstbuf);
+			gst_buffer_get_size(priv->out_buffers[i].gstbuf);
 	}
 
 	req->count = priv->out_buffers_num = allocated_num;
@@ -2697,7 +2696,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 
 	ret = 0;
 
-unlock:
+ unlock:
 	g_mutex_unlock(&priv->dev_lock);
 
 	return ret;
@@ -2745,7 +2744,7 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
 
 	for (i = 0; i < meta->n_planes; i++) {
 		cap_fmt->plane_fmt[i].sizeimage =
-				calc_plane_size(&info, meta, i);
+			calc_plane_size(&info, meta, i);
 		cap_fmt->plane_fmt[i].bytesperline = meta->stride[i];
 	}
 
@@ -2813,14 +2812,13 @@ create_cap_buffers_list(struct v4l_gst *priv)
 
 	for (i = 0; i < actual_max_buffers; i++) {
 		priv->cap_buffers[i].gstbuf =
-				g_queue_peek_nth(priv->req_gstbufs_queue, i);
+			g_queue_peek_nth(priv->req_gstbufs_queue, i);
 
 		/* Set identifiers for associating a GstBuffer with
 		   a V4L2 buffer in the V4L2 caller side. */
-		priv->mmap_offset =
-				set_mem_offset(&priv->cap_buffers[i],
-				priv->sink_pool,
-				priv->mmap_offset);
+		priv->mmap_offset = set_mem_offset(&priv->cap_buffers[i],
+						   priv->sink_pool,
+						   priv->mmap_offset);
 
 		priv->cap_buffers[i].state = V4L_GST_BUFFER_DEQUEUED;
 
@@ -2830,7 +2828,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		   a GstBuffer has. */
 		for (j = 0; j < priv->cap_fmt.num_planes; j++) {
 			priv->cap_buffers[i].planes[j].length =
-					priv->cap_fmt.plane_fmt[j].sizeimage;
+				priv->cap_fmt.plane_fmt[j].sizeimage;
 		}
 
 		GST_DEBUG("cap gst_buffer[%d] : %p", i,
@@ -2929,7 +2927,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 
 	ret = 0;
 
-unlock:
+ unlock:
 	g_mutex_unlock(&priv->dev_lock);
 
 	return ret;
@@ -3017,7 +3015,7 @@ set_cap_format_to_pipeline(struct v4l_gst *priv)
 
 	ret = TRUE;
 
-free_objects:
+ free_objects:
 	gst_caps_unref(caps);
 	gst_object_unref(peer_elem);
 
@@ -3338,7 +3336,7 @@ gst_backend_mmap(struct v4l_gst *priv, void *start, size_t length,
 		goto unlock;
 	}
 
-unlock:
+ unlock:
 	g_mutex_unlock(&priv->dev_lock);
 
 	GST_DEBUG("Final map = %p", map);
@@ -3479,7 +3477,7 @@ queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 		query_ctrl->maximum = V4L2_MPEG_VIDEO_VP9_PROFILE_2;
 		break;
 #endif
-	/* TODO: fill info for other supported ctrls */
+		/* TODO: fill info for other supported ctrls */
 	default:
 		GST_ERROR("unsupported query_ctrl id: %x", query_ctrl->id);
 		errno = EINVAL;
@@ -3641,7 +3639,7 @@ try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 
 	fourcc_to_string(format->fmt.pix_mp.pixelformat, fourcc_str);
 	GST_DEBUG("VIDIOC_TRY_FMT: type: 0x%x, pixelformat: %s (0x%x)",
-		 format->type, fourcc_str, format->fmt.pix_mp.pixelformat);
+		  format->type, fourcc_str, format->fmt.pix_mp.pixelformat);
 
 	g_mutex_lock(&priv->dev_lock);
 
@@ -3684,7 +3682,7 @@ g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
 		GST_DEBUG("unsupported v4l2_crop type: 0x%x", crop->type);
 	}
 	GST_DEBUG("v4l2_crop rect: left:%d top:%d width: %u height: %u",
-		crop->c.left, crop->c.top, crop->c.width, crop->c.height);
+		  crop->c.left, crop->c.top, crop->c.width, crop->c.height);
 
 	return 0;
 }
@@ -3735,8 +3733,8 @@ try_decoder_cmd_ioctl(struct v4l_gst *priv,
 	switch (decoder_cmd->cmd) {
 	case V4L2_DEC_CMD_START:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
-			  "v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
-			   decoder_cmd->start.speed, decoder_cmd->start.format);
+			      "v4l2_dec_cmd: V4L2_DEC_CMD_START speed: %d format: %x",
+			      decoder_cmd->start.speed, decoder_cmd->start.format);
 		break;
 	case V4L2_DEC_CMD_STOP:
 		GST_CAT_DEBUG(v4l_gst_ioctl_debug_category,
@@ -3783,7 +3781,7 @@ unsubscribe_event_ioctl(struct v4l_gst *priv,
 	case V4L2_EVENT_ALL:
 		/* V4L2_EVENT_ALL is valid only for unsubscribe:
 		   https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/vidioc-dqevent.html#id2
-		 */
+		*/
 		priv->v4l2events.subscribed = 0;
 		break;
 	case V4L2_EVENT_SOURCE_CHANGE:
