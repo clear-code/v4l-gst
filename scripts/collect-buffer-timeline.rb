@@ -34,7 +34,8 @@ COLUMNS = [
   "APPSINK",
   "pts APPSINK",
   *CAP_PORT_NUM.times.collect { |i| "CAP_#{i}" },
-  "pts CAP"
+  "pts CAP DQBUF",
+  "pts CAP QBUF",
 ]
 
 queued_buffers = { "OUT" => Set[], "CAP" => Set[] }
@@ -126,10 +127,11 @@ ARGF.each_line do |line|
     columns[buf_column_index(port, buffer_index)] = "Q"
     queued_buffers[port] << buffer_index
     columns[COLUMNS.index("pts OUT")] = pts if port == "OUT" && pts
+    columns[COLUMNS.index("pts CAP QBUF")] = pts if port == "CAP" && pts
   when "DQBUF"
     columns[buf_column_index(port, buffer_index)] = "D"
     queued_buffers[port].delete(buffer_index)
-    columns[COLUMNS.index("pts CAP")] = pts if port == "CAP" && pts
+    columns[COLUMNS.index("pts CAP DQBUF")] = pts if port == "CAP" && pts
   end
 
   queued_buffers.each do |port, buf_indexes|

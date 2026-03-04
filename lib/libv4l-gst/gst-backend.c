@@ -1858,8 +1858,9 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	buffer = &priv->cap_buffers[v4l2buf->index];
 	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
-		      "QBUF CAP: gstbuf=%p, index=%d",
-		      buffer->gstbuf, v4l2buf->index);
+		      "QBUF CAP: gstbuf=%p, index=%d, pts=%lu",
+		      buffer->gstbuf, v4l2buf->index,
+		      GST_BUFFER_PTS(buffer->gstbuf) / 1000000);
 
 	if (buffer->state == V4L_GST_BUFFER_QUEUED) {
 		GST_ERROR("Buffer %u is already queued", v4l2buf->index);
