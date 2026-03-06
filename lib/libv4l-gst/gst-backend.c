@@ -66,6 +66,7 @@ struct v4l_gst_buffer {
 	struct v4l2_plane planes[GST_VIDEO_MAX_PLANES];
 	struct v4l_gst *priv;
 	enum buffer_state state;
+	int plane0_fd; /* See reindex_buffers() */
 };
 
 struct fmt {
@@ -2151,6 +2152,74 @@ acquire_buffer_from_pool(struct v4l_gst *priv, GstBufferPool *pool)
 	return gstbuf;
 }
 
+/* gst-omx may reassociate GstBuffers and dmabuf-fds without closing them after
+   flushing. Since clients will associate a dmabuf-fd with a v4l2_buffer's
+   index, we need to update GstBuffer-index association after flushing to avoid
+   misalign with clients. */
+static void
+reindex_buffers(struct v4l_gst *priv)
+{
+	int i, j;
+	gchar fd_str[8], error_fds[128] = {0};
+	gchar opened_fds[128] = {0}, initial_fds[128] = {0};
+
+	for (i = 0; i < priv->cap_buffers_num; ++i) {
+		struct v4l_gst_buffer *buf1 = &priv->cap_buffers[i];
+		GstMemory *mem;
+		int fd;
+
+		g_snprintf(fd_str, sizeof(fd_str), "%d:%d,",
+			   i, buf1->plane0_fd);
+		g_strlcat(initial_fds, fd_str, sizeof(initial_fds));
+
+		if (!buf1->plane0_fd)
+			continue;
+		if (buf1->state == V4L_GST_BUFFER_DEQUEUED)
+			continue;
+		if (!gst_buffer_n_memory(buf1->gstbuf))
+			continue;
+
+		mem = gst_buffer_peek_memory(buf1->gstbuf, 0);
+		if (!gst_is_dmabuf_memory(mem))
+			continue;
+
+		fd = gst_dmabuf_memory_get_fd(mem);
+
+		g_snprintf(fd_str, sizeof(fd_str), "%d:%d,", i, fd);
+		g_strlcat(opened_fds, fd_str, sizeof(opened_fds));
+
+		if (buf1->plane0_fd == fd)
+			continue;
+
+		for (j = 0; j < priv->cap_buffers_num; ++j) {
+			struct v4l_gst_buffer *buf2 = &priv->cap_buffers[j];
+			GstBuffer *gstbuf = buf1->gstbuf;
+
+			if (i == j)
+				continue;
+			if (buf2->plane0_fd != fd)
+				continue;
+			if (buf2->state == V4L_GST_BUFFER_DEQUEUED)
+				continue;
+
+			buf1->gstbuf = buf2->gstbuf;
+			buf2->gstbuf = gstbuf;
+			i--;
+			break;
+		}
+		if (j >= priv->cap_buffers_num) {
+			g_snprintf(fd_str, sizeof(fd_str), "%d:%d,", i, fd);
+			g_strlcat(error_fds, fd_str, sizeof(error_fds));
+		}
+	}
+
+	if (*error_fds) {
+		GST_WARNING("Failed to reindex dmabuf fd!");
+		GST_DEBUG("failed fds: %s / opened_fds: %s / initial_fds: %s",
+			  error_fds, opened_fds, initial_fds);
+	}
+}
+
 static int
 dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
@@ -2221,6 +2290,8 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	gstbuf = dequeue_cap_buffer(priv);
 	if (!gstbuf)
 		return -1;
+
+	reindex_buffers(priv);
 
 	index = get_v4l2_buffer_index(priv->cap_buffers,
 				      priv->cap_buffers_num, gstbuf);
@@ -3427,7 +3498,12 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 
 	switch(expbuf->type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		expbuf->fd = dup(gst_dmabuf_memory_get_fd (mem));
+		expbuf->fd = dup(gst_dmabuf_memory_get_fd(mem));
+		if (expbuf->plane == 0) {
+			/* See reindex_buffers() */
+			priv->cap_buffers[expbuf->index].plane0_fd
+				= gst_dmabuf_memory_get_fd(mem);
+		}
 		break;
 	case V4L2_BUF_TYPE_PRIVATE:
 		expbuf->reserved[0] = mem->offset;
