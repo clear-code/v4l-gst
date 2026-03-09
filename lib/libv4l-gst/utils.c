@@ -21,6 +21,7 @@
 #include <linux/videodev2.h>
 #include <linux/dma-buf.h>
 #include <sys/ioctl.h>
+#include <gst/allocators/gstdmabuf.h>
 
 struct v4l_gst_format_info {
 	guint fourcc;
