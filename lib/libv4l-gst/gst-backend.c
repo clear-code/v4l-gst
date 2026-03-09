@@ -1158,9 +1158,8 @@ gst_backend_deinit(struct v4l_gst *priv)
 	g_mutex_clear(&priv->dev_lock);
 
 	if (priv->v4l2events.queue) {
-		g_queue_clear_full(priv->v4l2events.queue,
-				   (GDestroyNotify)g_free);
-		g_queue_free(priv->v4l2events.queue);
+		g_queue_free_full(priv->v4l2events.queue,
+				  (GDestroyNotify)g_free);
 	}
 	priv->v4l2events.subscribed = 0;
 	g_mutex_clear(&priv->v4l2events.mutex);
