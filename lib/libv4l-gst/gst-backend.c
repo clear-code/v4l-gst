@@ -142,6 +142,7 @@ struct v4l_gst {
 		gint max_width;
 		gint max_height;
 		guint32 preferred_format;
+		guint32 fixed_pipeline;
 		gchar *h264_pipeline;
 		gchar *hevc_pipeline;
 		gchar *pool_lib_path;
@@ -190,7 +191,7 @@ parse_config_file(struct v4l_gst *priv)
 
 	/* [libv4l-gst] */
 	if (g_key_file_has_group(conf_key, libv4l_gst_group)) {
-		gchar *preferred_format;
+		gchar *preferred_format, *fixed_pipeline;
 		guint preferred_format_len = 0;
 		const gchar *frame_check;
 
@@ -233,6 +234,23 @@ parse_config_file(struct v4l_gst *priv)
 			GST_WARNING("Invalid FourCC for preferred-format: %s",
 				    preferred_format);
 		}
+		g_free(preferred_format);
+
+		fixed_pipeline
+			= g_key_file_get_string(conf_key, libv4l_gst_group,
+						"fixed-pipeline",
+						NULL);
+		if (fixed_pipeline) {
+			guint32 fourcc = fourcc_from_string(fixed_pipeline);
+			if (fourcc == V4L2_PIX_FMT_H264 ||
+			    fourcc == V4L2_PIX_FMT_HEVC) {
+				priv->config.fixed_pipeline = fourcc;
+			} else {
+				GST_WARNING("Unknown fixed-pipeline: %s",
+					    fixed_pipeline);
+			}
+		}
+		g_free(fixed_pipeline);
 
 		frame_check = getenv("V4L_GST_FRAME_CHECK");
 		if (frame_check) {
@@ -1048,6 +1066,51 @@ init_buffer_pool(struct v4l_gst *priv)
 	return FALSE;
 }
 
+static gboolean
+init_pipeline(struct v4l_gst *priv, guint32 fourcc)
+{
+	if (fourcc == V4L2_PIX_FMT_H264) {
+		GST_DEBUG("create H264 pipeline");
+		priv->pipeline = create_pipeline(priv->config.h264_pipeline);
+	} else if (fourcc == V4L2_PIX_FMT_HEVC) {
+		GST_DEBUG("create HEVC pipeline");
+		priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+	}
+
+	if (!priv->pipeline) {
+		gchar fourcc_str[5];
+		fourcc_to_string(fourcc, fourcc_str);
+		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
+		goto error;
+	}
+
+	if (!init_app_elements(priv))
+		goto error;
+
+	if (!init_buffer_pool(priv))
+		goto error;
+
+	priv->out_fmt.pixelformat = fourcc;
+
+	return TRUE;
+
+ error:
+	if (priv->cap_gstbufs_queue) {
+		g_queue_free(priv->cap_gstbufs_queue);
+		priv->cap_gstbufs_queue = NULL;
+	}
+	if (priv->req_gstbufs_queue) {
+		g_queue_free(priv->req_gstbufs_queue);
+		priv->req_gstbufs_queue = NULL;
+	}
+	if (priv->pipeline) {
+		gst_object_unref(priv->pipeline);
+		priv->pipeline = NULL;
+	}
+	errno = EINVAL;
+	return FALSE;
+}
+
 struct v4l_gst*
 gst_backend_init(int fd)
 {
@@ -1121,6 +1184,11 @@ gst_backend_init(int fd)
 	g_cond_init(&priv->cap_reqbuf_cond);
 
 	g_mutex_init(&priv->dev_lock);
+
+	if (priv->config.fixed_pipeline) {
+		if (!init_pipeline(priv, priv->config.fixed_pipeline))
+			goto error;
+	}
 
 	GST_DEBUG("Initialized gst backend");
 	return priv;
@@ -1295,7 +1363,6 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 		if (priv->out_fmt.pixelformat == pix_fmt->pixelformat) {
 			GST_WARNING("Same pixelformat with current: %s",
 				    fourcc_str);
-			return 0;
 		} else {
 			gchar current[5];
 
@@ -1306,27 +1373,11 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 			errno = EINVAL;
 			return -1;
 		}
+	} else {
+		gboolean succeeded = init_pipeline(priv, pix_fmt->pixelformat);
+		if (!succeeded)
+			goto error;
 	}
-
-	if (pix_fmt->pixelformat == V4L2_PIX_FMT_H264) {
-		GST_DEBUG("create H264 pipeline");
-		priv->pipeline = create_pipeline(priv->config.h264_pipeline);
-	} else if (pix_fmt->pixelformat == V4L2_PIX_FMT_HEVC) {
-		GST_DEBUG("create HEVC pipeline");
-		priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
-	}
-
-	if (!priv->pipeline) {
-		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
-		goto error;
-	}
-
-	/* Initialization regarding appsrc and appsink elements */
-	if (!init_app_elements(priv))
-		goto error;
-
-	if (!init_buffer_pool(priv))
-		goto error;
 
 	priv->out_fmt = *pix_fmt;
 
@@ -1339,19 +1390,6 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 	return 0;
 
  error:
-	if (priv->cap_gstbufs_queue) {
-		g_queue_free(priv->cap_gstbufs_queue);
-		priv->cap_gstbufs_queue = NULL;
-	}
-	if (priv->req_gstbufs_queue) {
-		g_queue_free(priv->req_gstbufs_queue);
-		priv->req_gstbufs_queue = NULL;
-	}
-	if (priv->pipeline) {
-		gst_object_unref(priv->pipeline);
-		priv->pipeline = NULL;
-	}
-	errno = EINVAL;
 	return -1;
 }
 
