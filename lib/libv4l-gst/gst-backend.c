@@ -1361,8 +1361,8 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	if (priv->pipeline) {
 		if (priv->out_fmt.pixelformat == pix_fmt->pixelformat) {
-			GST_WARNING("Same pixelformat with current: %s",
-				    fourcc_str);
+			GST_INFO("Same pixelformat with current: %s",
+				 fourcc_str);
 		} else {
 			gchar current[5];
 
@@ -3678,7 +3678,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10:
 			break;
 		default:
-			GST_ERROR("unsupported H264 profile index: %x", query_menu->index);
+			GST_INFO("unsupported H264 profile index: %x", query_menu->index);
 			errno = EINVAL;
 			return -1;
 		}
@@ -3691,7 +3691,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 		case V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10:
 			break;
 		default:
-			GST_ERROR("unsupported HEVC profile index: %x", query_menu->index);
+			GST_INFO("unsupported HEVC profile index: %x", query_menu->index);
 			errno = EINVAL;
 			return -1;
 		}
@@ -3700,7 +3700,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 #if 0 // omit non-supported AV1, VP8, VP9
 	case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
 		if (query_menu->index != V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN) {
-			GST_ERROR("unsupported VP8 profile index: %x", query_menu->index);
+			GST_INFO("unsupported VP8 profile index: %x", query_menu->index);
 			errno = EINVAL;
 			return -1;
 		}
@@ -3708,7 +3708,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 		break;
 	case V4L2_CID_MPEG_VIDEO_VP8_PROFILE:
 		if (query_menu->index != V4L2_MPEG_VIDEO_VP8_PROFILE_0) {
-			GST_ERROR("unsupported VP8 profile index: %x", query_menu->index);
+			GST_INFO("unsupported VP8 profile index: %x", query_menu->index);
 			errno = EINVAL;
 			return -1;
 		}
@@ -3720,7 +3720,7 @@ querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 		case V4L2_MPEG_VIDEO_VP9_PROFILE_2:
 			break;
 		default:
-			GST_ERROR("unsupported VP9 profile index: %x", query_menu->index);
+			GST_INFO("unsupported VP9 profile index: %x", query_menu->index);
 			errno = EINVAL;
 			return -1;
 		}
