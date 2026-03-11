@@ -89,6 +89,7 @@ struct v4l_gst {
 	GstElement *appsrc;
 	GstElement *appsink;
 	GstElement *decoder;
+	GstPad *video_sink_pad;
 
 	GstVideoInfo src_video_info;
 
@@ -431,37 +432,16 @@ get_buffer_pool_ops(gchar *pool_lib_path, void **pool_lib_handle,
 }
 
 static GstPad *
-get_peer_pad(GstElement *elem, const gchar *pad_name, gboolean skip_queue)
+get_peer_pad(GstElement *elem, const gchar *pad_name)
 {
-	GstPad *peer_pad = NULL;
-	GstElement *element = elem;
+	GstPad *pad, *peer_pad = NULL;
 
-	g_object_ref(element);
+	pad = gst_element_get_static_pad(elem, pad_name);
+	if (!pad)
+		return NULL;
 
-	do {
-		GstPad *pad = gst_element_get_static_pad(element, pad_name);
-		GstElement *holder;
-		const gchar *name;
-
-		if (!pad)
-			break;
-		peer_pad = gst_pad_get_peer(pad);
-		gst_object_unref(pad);
-		if (!peer_pad)
-			break;
-		holder = gst_pad_get_parent_element(peer_pad);
-		name = gst_element_get_metadata(holder,
-						GST_ELEMENT_METADATA_LONGNAME);
-		if (skip_queue && (!strcmp("Queue", name) ||
-				   !strcmp("Tee pipe fitting", name))) {
-			g_object_unref(element);
-			g_object_unref(peer_pad);
-			peer_pad = NULL;
-			element = holder;
-		}
-	} while(!peer_pad);
-
-	g_object_unref(element);
+	peer_pad = gst_pad_get_peer(pad);
+	gst_object_unref(pad);
 
 	return peer_pad;
 }
@@ -472,7 +452,10 @@ get_peer_element(GstElement *elem, const gchar *pad_name)
 	GstPad *peer_pad;
 	GstElement *peer_elem;
 
-	peer_pad = get_peer_pad(elem, pad_name, FALSE);
+	peer_pad = get_peer_pad(elem, pad_name);
+	if (!peer_pad)
+		return NULL;
+
 	peer_elem = gst_pad_get_parent_element(peer_pad);
 	gst_object_unref(peer_pad);
 
@@ -480,15 +463,52 @@ get_peer_element(GstElement *elem, const gchar *pad_name)
 }
 
 static GstCaps *
-get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name)
+get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name, GstPad **peer_pad)
 {
-	GstPad *peer_pad;
-	GstCaps *caps;
+	GstPad *pad, *first_peer_pad = NULL;
+	GstCaps *caps = NULL, *first_caps = NULL;;
 
-	peer_pad = get_peer_pad(elem, pad_name, TRUE);
-	caps = GST_PAD_TEMPLATE_CAPS(GST_PAD_PAD_TEMPLATE(peer_pad));
-	gst_caps_ref(caps);
-	gst_object_unref(peer_pad);
+	gst_object_ref(elem);
+
+	do {
+		pad = get_peer_pad(elem, pad_name);
+		gst_object_unref(elem);
+		if (!pad)
+			break;
+
+		caps = GST_PAD_TEMPLATE_CAPS(GST_PAD_PAD_TEMPLATE(pad));
+		if (!first_caps) {
+			first_caps = caps;
+			gst_caps_ref(first_caps);
+			first_peer_pad = pad;
+			gst_object_ref(first_peer_pad);
+		}
+
+		/* Skip meaningless elements such as queue or tee */
+		if (gst_caps_is_any(caps)) {
+			caps = NULL;
+			elem = gst_pad_get_parent_element(pad);
+			gst_object_unref(pad);
+		} else {
+			gst_caps_ref(caps);
+		}
+	} while (!caps && elem && pad);
+
+	if (first_caps) {
+		/* fallback to first peer if no meaningful caps found */
+		if (!caps) {
+			caps = first_caps;
+			pad = first_peer_pad;
+		} else {
+			gst_caps_unref(first_caps);
+			gst_object_unref(first_peer_pad);
+		}
+	}
+
+	if (peer_pad)
+		*peer_pad = pad;
+	else if (pad)
+		gst_object_unref(pad);
 
 	return caps;
 }
@@ -531,7 +551,11 @@ get_supported_video_format_out(struct v4l_gst *priv)
 	guint fourcc;
 	struct fmt *fmt;
 
-	caps = get_peer_pad_template_caps(priv->appsrc, "src");
+	caps = get_peer_pad_template_caps(priv->appsrc, "src", NULL);
+	if (!caps) {
+		GST_ERROR("Failed to get video format for OUTPUT");
+		return FALSE;
+	}
 
 	structure = gst_caps_get_structure(caps, 0);
 	mime = gst_structure_get_name(structure);
@@ -578,7 +602,12 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 
 	g_array_set_size(priv->supported_cap_fmts, 0);
 
-	caps = get_peer_pad_template_caps(priv->appsink, "sink");
+	caps = get_peer_pad_template_caps(priv->appsink, "sink",
+					  &priv->video_sink_pad);
+	if (!caps) {
+		GST_ERROR("Failed to get video format for CAPTURE");
+		return FALSE;
+	}
 
 	/* We treat GST_CAPS_ANY as all video formats support. */
 	if (gst_caps_is_any(caps)) {
@@ -891,17 +920,14 @@ decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 static gulong
 setup_query_pad_probe(struct v4l_gst *priv)
 {
-	GstPad *peer_pad;
 	gulong probe_id;
 
-	peer_pad = get_peer_pad(priv->appsink, "sink", TRUE);
-	g_signal_connect(G_OBJECT(peer_pad), "unlinked",
+	g_signal_connect(G_OBJECT(priv->video_sink_pad), "unlinked",
 			 G_CALLBACK(appsink_pad_unlinked_cb), priv);
-	probe_id = gst_pad_add_probe(peer_pad,
+	probe_id = gst_pad_add_probe(priv->video_sink_pad,
 				     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
 				     pad_probe_query,
 				     priv, NULL);
-	gst_object_unref(peer_pad);
 
 	return probe_id;
 }
@@ -1208,16 +1234,6 @@ gst_backend_init(int fd)
 	return NULL;
 }
 
-static void
-remove_query_pad_probe(GstElement *appsink, gulong probe_id)
-{
-	GstPad *peer_pad;
-
-	peer_pad = get_peer_pad(appsink, "sink", TRUE);
-	gst_pad_remove_probe(peer_pad, probe_id);
-	gst_object_unref(peer_pad);
-}
-
 void
 gst_backend_deinit(struct v4l_gst *priv)
 {
@@ -1238,8 +1254,13 @@ gst_backend_deinit(struct v4l_gst *priv)
 		gst_object_unref(pad);
 	}
 
-	if (priv->probe_id)
-		remove_query_pad_probe(priv->appsink, priv->probe_id);
+	if (priv->video_sink_pad) {
+		if (priv->probe_id) {
+			gst_pad_remove_probe(priv->video_sink_pad,
+					     priv->probe_id);
+		}
+		gst_object_unref(priv->video_sink_pad);
+	}
 
 	if (priv->out_buffers)
 		g_free(priv->out_buffers);
