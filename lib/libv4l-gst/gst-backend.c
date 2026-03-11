@@ -144,8 +144,7 @@ struct v4l_gst {
 		gint max_height;
 		guint32 preferred_format;
 		guint32 fixed_pipeline;
-		gchar *h264_pipeline;
-		gchar *hevc_pipeline;
+		GHashTable *pipelines; /* gchar *fourcc, gchar *pipeine */
 		gchar *pool_lib_path;
 		FrameCheckType frame_check;
 	} config;
@@ -267,12 +266,18 @@ parse_config_file(struct v4l_gst *priv)
 	}
 
 	/* [H264], [HEVC], etc... */
+	priv->config.pipelines = g_hash_table_new_full(g_str_hash, g_str_equal,
+						       g_free, g_free);
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
 		gchar *pipeline_str;
 
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
+			continue;
+
+		/* treat only fourcc */
+		if (strlen(groups[i]) != 4)
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
@@ -284,15 +289,12 @@ parse_config_file(struct v4l_gst *priv)
 			err = NULL;
 			continue;
 		}
-		if (!g_strcmp0(groups[i], "H264")) {
-			priv->config.h264_pipeline = pipeline_str;
-			n_pipelines++;
-			GST_DEBUG("enabled H264 pipeline: %s", pipeline_str);
-		} else if (!g_strcmp0(groups[i], "HEVC")) {
-			priv->config.hevc_pipeline = pipeline_str;
-			n_pipelines++;
-			GST_DEBUG("enabled HEVC pipeline: %s", pipeline_str);
-		}
+
+		g_hash_table_insert(priv->config.pipelines,
+				    g_strdup(groups[i]),
+				    pipeline_str);
+		GST_DEBUG("enabled %s pipeline: %s", groups[i], pipeline_str);
+		n_pipelines++;
 	}
 
 	g_strfreev(groups);
@@ -513,32 +515,35 @@ get_peer_pad_template_caps(GstElement *elem, const gchar *pad_name, GstPad **pee
 	return caps;
 }
 
+static void
+fill_out_fmts_func(gpointer key, gpointer value, gpointer user_data)
+{
+	GArray *fmts = user_data;
+	struct fmt fmt;
+
+	fmt.fourcc = fourcc_from_string(key);
+	g_strlcpy(fmt.desc, key, FMTDESC_NAME_LENGTH);
+	g_array_append_vals(fmts, &fmt, 1);
+}
+
 static gboolean
 fill_config_video_format_out(struct v4l_gst *priv)
 {
-	struct fmt fmt;
+	gint i;
+	gchar codecs[256] = {0};
 
 	g_array_set_size(priv->supported_out_fmts, 0);
+	g_hash_table_foreach(priv->config.pipelines,
+			     fill_out_fmts_func,
+			     priv->supported_out_fmts);
 
-	if (priv->config.h264_pipeline) {
-		fmt.fourcc = V4L2_PIX_FMT_H264;
-		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->supported_out_fmts, &fmt, 1);
+	for (i = 0; i < priv->supported_out_fmts->len; i++) {
+		struct fmt *fmts = (struct fmt*)priv->supported_out_fmts->data;
+		g_strlcat(codecs, fmts[i].desc, sizeof(codecs));
+		g_strlcat(codecs, " ", sizeof(codecs));
 	}
-	if (priv->config.hevc_pipeline) {
-		fmt.fourcc = V4L2_PIX_FMT_HEVC;
-		g_strlcpy(fmt.desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-		g_array_append_vals(priv->supported_out_fmts, &fmt, 1);
-	}
-	if (priv->config.h264_pipeline && priv->config.hevc_pipeline) {
-		GST_DEBUG("out supported codecs : h264, hevc");
-	} else if (priv->config.h264_pipeline) {
-		GST_DEBUG("out supported codecs : h264");
-	} else if (priv->config.hevc_pipeline) {
-		GST_DEBUG("out supported codecs : hevc");
-	} else {
-		GST_DEBUG("out supported codecs : nothing");
-	}
+	GST_DEBUG("supported codecs: %s", codecs);
+
 	return priv->supported_out_fmts->len > 0;
 }
 
@@ -1095,17 +1100,18 @@ init_buffer_pool(struct v4l_gst *priv)
 static gboolean
 init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 {
-	if (fourcc == V4L2_PIX_FMT_H264) {
-		GST_DEBUG("create H264 pipeline");
-		priv->pipeline = create_pipeline(priv->config.h264_pipeline);
-	} else if (fourcc == V4L2_PIX_FMT_HEVC) {
-		GST_DEBUG("create HEVC pipeline");
-		priv->pipeline = create_pipeline(priv->config.hevc_pipeline);
+	gchar fourcc_str[5];
+	const gchar *pipeline;
+
+	fourcc_to_string(fourcc, fourcc_str);
+	pipeline = g_hash_table_lookup(priv->config.pipelines, fourcc_str);
+
+	if (pipeline) {
+		GST_DEBUG("create %s pipeline: %s", fourcc_str, pipeline);
+		priv->pipeline = create_pipeline(pipeline);
 	}
 
 	if (!priv->pipeline) {
-		gchar fourcc_str[5];
-		fourcc_to_string(fourcc, fourcc_str);
 		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
 		goto error;
 	}
@@ -1224,8 +1230,8 @@ gst_backend_init(int fd)
 		g_array_free(priv->supported_out_fmts, TRUE);
 	if (priv->supported_cap_fmts)
 		g_array_free(priv->supported_cap_fmts, TRUE);
-	g_free(priv->config.h264_pipeline);
-	g_free(priv->config.hevc_pipeline);
+	if (priv->config.pipelines)
+		g_hash_table_destroy(priv->config.pipelines);
 	g_free(priv->config.pool_lib_path);
 	if (priv->event_state)
 		delete_event_state(priv->event_state);
@@ -1291,8 +1297,9 @@ gst_backend_deinit(struct v4l_gst *priv)
 	if (priv->pipeline)
 		gst_object_unref(priv->pipeline);
 
-	g_free(priv->config.h264_pipeline);
-	g_free(priv->config.hevc_pipeline);
+	if (priv->config.pipelines)
+		g_hash_table_destroy(priv->config.pipelines);
+
 	g_free(priv->config.pool_lib_path);
 
 	delete_event_state(priv->event_state);
@@ -3613,6 +3620,7 @@ g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 int
 queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 {
+	gchar fourcc_str[5];
 
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -3629,7 +3637,8 @@ queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		if (priv->config.h264_pipeline) {
+		fourcc_to_string(V4L2_PIX_FMT_H264, fourcc_str);
+		if (g_hash_table_lookup(priv->config.pipelines, fourcc_str)) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
 		} else {
@@ -3639,7 +3648,8 @@ queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		if (priv->config.hevc_pipeline) {
+		fourcc_to_string(V4L2_PIX_FMT_H264, fourcc_str);
+		if (g_hash_table_lookup(priv->config.pipelines, fourcc_str)) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
 		} else {
