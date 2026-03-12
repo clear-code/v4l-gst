@@ -18,11 +18,11 @@
 
 # Usage:
 #
-# $ GST_DEBUG="v4l-gst-buffer:TRACE" GST_DEBUG="v4l-gst.log" chromium /path/to/video.mp4
+# $ GST_DEBUG="v4l-gst-buffer:TRACE" GST_DEBUG_FILE="v4l-gst.log" chromium /path/to/video.mp4
 # $ ruby /path/to/collect-buffer-timeline.rb v4l-gst.log > buffer-timeline.csv
 #
 # Load buffer-timeline.csv by a spreadsheet software then highlight each labels
-# to visualize
+# by `Conditional Formatting` feature to visualize.
 
 OUT_PORT_NUM = 16
 CAP_PORT_NUM = 10
