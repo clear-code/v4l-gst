@@ -2055,13 +2055,21 @@ set_v4l2_buffer_plane_params(struct v4l_gst *priv,
 			     struct v4l2_buffer *v4l2buf)
 {
 	gint i;
+	guint32 offset = 0;
 
 	memcpy(v4l2buf->m.planes, buffers[v4l2buf->index].planes,
 	       sizeof(struct v4l2_plane) * n_planes);
 
-	if (bytesused) {
-		for (i = 0; i < n_planes; i++)
+	for (i = 0; i < n_planes; i++) {
+		if (bytesused)
 			v4l2buf->m.planes[i].bytesused = bytesused[i];
+		/* Use `data_offset` to notify offsets of multi-planes combined
+		   in single dmabuf fd. Most applications will ignore this
+		   field, so you'll need to modify such applications. */
+		if (gst_buffer_n_memory(buffers[v4l2buf->index].gstbuf) == 1) {
+			v4l2buf->m.planes[i].data_offset = offset;
+			offset += v4l2buf->m.planes[i].length;
+		}
 	}
 
 	if (timestamp) {
@@ -3541,8 +3549,7 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 	GST_TRACE("VIDIOC_EXPBUF: type: 0x%x index: %d flags: 0x%x",
 		  expbuf->type, expbuf->index, expbuf->flags);
 
-	if ((expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) ||
-	    (expbuf->type == V4L2_BUF_TYPE_PRIVATE)) {
+	if (expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		buffer = &priv->cap_buffers[expbuf->index];
 		if (expbuf->plane < gst_buffer_n_memory(buffer->gstbuf)) {
 			i = expbuf->plane;
@@ -3568,21 +3575,6 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 			/* See reindex_buffers() */
 			priv->cap_buffers[expbuf->index].plane0_fd
 				= gst_dmabuf_memory_get_fd(mem);
-		}
-		break;
-	case V4L2_BUF_TYPE_PRIVATE:
-		expbuf->reserved[0] = mem->offset;
-		if (priv->cap_fmt.pixelformat == V4L2_PIX_FMT_NV12 ||
-		    priv->cap_fmt.pixelformat == V4L2_PIX_FMT_NV21) {
-			if (expbuf->plane == 1) {
-				/* chromium V4L2 decoder implicitly use reserved[0] as frame offset, so set appropriate
-				   offset to secondary plane. */
-				gsize memory_size = gst_memory_get_sizes(mem, 0, NULL);
-				gsize total_plane_size = priv->cap_fmt.plane_fmt[0].sizeimage + priv->cap_fmt.plane_fmt[1].sizeimage;
-				if (memory_size == total_plane_size) {
-					expbuf->reserved[0] = mem->offset + priv->cap_fmt.plane_fmt[0].sizeimage;
-				}
-			}
 		}
 		break;
 	default:
