@@ -3543,27 +3543,41 @@ int
 expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 {
 	struct v4l_gst_buffer *buffer;
-	guint i = 0;
+	guint mem_index = 0;
 	GstMemory *mem = NULL;
 
 	GST_TRACE("VIDIOC_EXPBUF: type: 0x%x index: %d flags: 0x%x",
 		  expbuf->type, expbuf->index, expbuf->flags);
 
-	if (expbuf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		buffer = &priv->cap_buffers[expbuf->index];
-		if (expbuf->plane < gst_buffer_n_memory(buffer->gstbuf)) {
-			i = expbuf->plane;
-		}
-
-		mem = gst_buffer_peek_memory(buffer->gstbuf, i);
-		if (!gst_is_dmabuf_memory(mem)) {
-			GST_ERROR("Failed to get dambuf emmory.");
-			return -1;
-		}
+	if (expbuf->type != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
+	    expbuf->type != V4L2_BUF_TYPE_PRIVATE) {
+		GST_ERROR("Can only export capture buffers as dmabuf");
+		errno = EINVAL;
+		return -1;
 	}
 
-	if (mem == NULL) {
-		GST_ERROR("Invalid type.");
+	if (expbuf->index >= priv->cap_buffers_num) {
+		GST_ERROR("Buffer index is out of range!: %d/%d",
+			  expbuf->index, priv->cap_buffers_num);
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (expbuf->plane >= priv->cap_fmt.num_planes) {
+		GST_ERROR("Plane index is out of range!: %d/%d",
+			  expbuf->plane, priv->cap_fmt.num_planes);
+		errno = EINVAL;
+		return -1;
+	}
+
+	buffer = &priv->cap_buffers[expbuf->index];
+
+	if (expbuf->plane < gst_buffer_n_memory(buffer->gstbuf))
+		mem_index = expbuf->plane;
+
+	mem = gst_buffer_peek_memory(buffer->gstbuf, mem_index);
+	if (!mem || !gst_is_dmabuf_memory(mem)) {
+		GST_ERROR("Failed to get dambuf emmory.");
 		errno = EINVAL;
 		return -1;
 	}
@@ -3573,12 +3587,21 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 		expbuf->fd = dup(gst_dmabuf_memory_get_fd(mem));
 		if (expbuf->plane == 0) {
 			/* See reindex_buffers() */
-			priv->cap_buffers[expbuf->index].plane0_fd
-				= gst_dmabuf_memory_get_fd(mem);
+			buffer->plane0_fd = gst_dmabuf_memory_get_fd(mem);
 		}
 		break;
+       case V4L2_BUF_TYPE_PRIVATE:
+	       /* For backward compatibility, will be removed.
+		  See also set_v4l2_buffer_plane_params(). */
+	       expbuf->reserved[0] = 0;
+	       if (gst_buffer_n_memory(buffer->gstbuf) == 1) {
+		       guint i;
+		       for (i = 0; i < expbuf->plane; i++)
+			       expbuf->reserved[0] += buffer->planes[i].length;
+	       }
+	       break;
 	default:
-		GST_ERROR("Can only export capture buffers as dmebuf");
+		GST_ERROR("Can only export capture buffers as dmabuf");
 		errno = EINVAL;
 		return -1;
 	}
