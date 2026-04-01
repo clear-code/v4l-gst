@@ -719,14 +719,46 @@ create_buffer_pool(struct libv4l_gst_buffer_pool_ops *pool_ops,
 }
 
 static void
+get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
+{
+	guint stride_align, i;
+
+	/* ARM Mali requires strict allocation alignment for each color format.
+	   ref: https://github.com/renesas-rz/gst-plugins-bad/commit/728304b71301f909142bd2d29099a8fc370e5e25
+	 */
+	switch (priv->cap_fmt.pixelformat) {
+	case GST_VIDEO_FORMAT_BGRA:
+	case GST_VIDEO_FORMAT_BGRx:
+		stride_align = 64;
+		break;
+	case GST_VIDEO_FORMAT_RGB16:
+	case GST_VIDEO_FORMAT_NV12:
+	case GST_VIDEO_FORMAT_YUY2:
+		stride_align = 16;
+		break;
+	default:
+		/* Not confirmed */
+		stride_align = 0;
+		break;
+	}
+
+	gst_video_alignment_reset(alignment);
+	for (i = 0; i < priv->cap_fmt.num_planes; i++)
+		alignment->stride_align[i] = stride_align;
+}
+
+static void
 set_buffer_pool_params(GstBufferPool *pool, GstCaps *caps, guint buf_size,
-		       guint min_buffers, guint max_buffers)
+		       guint min_buffers, guint max_buffers,
+		       GstVideoAlignment *alignment)
 {
 	GstStructure *config;
 
 	config = gst_buffer_pool_get_config(pool);
 	gst_buffer_pool_config_set_params(config, caps, buf_size, min_buffers,
 					  max_buffers);
+	if (alignment)
+		gst_buffer_pool_config_set_video_alignment(config, alignment);
 	gst_buffer_pool_set_config(pool, config);
 }
 
@@ -816,6 +848,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 	GstVideoInfo info;
 	guint src_width = priv->src_video_info.width;
 	guint src_height = priv->src_video_info.height;
+	GstVideoAlignment alignment;
 
 	query = GST_PAD_PROBE_INFO_QUERY (probe_info);
 	if (GST_QUERY_TYPE (query) == GST_QUERY_ALLOCATION &&
@@ -844,6 +877,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		}
 
 		retrieve_cap_format_info(priv, &info);
+		get_cap_buffer_alignment(priv, &alignment);
 		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
 		push_source_change_event(priv);
 
@@ -864,7 +898,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
 		*/
 		set_buffer_pool_params(priv->sink_pool, caps, info.size,
-				       0, priv->cap_buffers_num);
+				       0, priv->cap_buffers_num, &alignment);
 
 		gst_query_add_allocation_pool(query, priv->sink_pool,
 					      info.size,
@@ -2861,7 +2895,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 
 	set_buffer_pool_params(priv->src_pool, caps,
 			       priv->out_fmt.plane_fmt[0].sizeimage,
-			       adjusted_count, adjusted_count);
+			       adjusted_count, adjusted_count, NULL);
 
 	allocated_num = alloc_buffers_from_pool(priv, priv->src_pool,
 						&priv->out_buffers);
