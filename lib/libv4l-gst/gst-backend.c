@@ -809,13 +809,23 @@ retrieve_cap_format_info(struct v4l_gst *priv, GstVideoInfo *info)
 	priv->cap_fmt.num_planes = info->finfo->n_planes;
 }
 
-static void
+static gboolean
 wait_for_cap_reqbuf_invocation(struct v4l_gst *priv)
 {
+	gboolean succeeded = TRUE;
+	gint64 end_time;
+
 	g_mutex_lock(&priv->cap_reqbuf_mutex);
-	while (priv->cap_buffers_num <= 0)
-		g_cond_wait(&priv->cap_reqbuf_cond, &priv->cap_reqbuf_mutex);
+	while (succeeded && priv->cap_buffers_num <= 0) {
+		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
+		succeeded = g_cond_wait_until(&priv->cap_reqbuf_cond,
+					      &priv->cap_reqbuf_mutex,
+					      end_time);
+	}
+	succeeded = priv->cap_buffers_num > 0;
 	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+
+	return succeeded;
 }
 
 static inline void
@@ -882,7 +892,6 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		push_source_change_event(priv);
 
 		set_event(priv->event_state, POLLOUT);
-		wait_for_cap_reqbuf_invocation(priv);
 
 		/* Even if a min value is set here, omxvideodec will reset it
 		   with an internally calculated value. It's at least 4 and
@@ -897,12 +906,16 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   e.g.)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
 		*/
-		set_buffer_pool_params(priv->sink_pool, caps, info.size,
-				       0, priv->cap_buffers_num, &alignment);
-
-		gst_query_add_allocation_pool(query, priv->sink_pool,
-					      info.size,
-					      0, priv->cap_buffers_num);
+		if (wait_for_cap_reqbuf_invocation(priv)) {
+			set_buffer_pool_params(priv->sink_pool, caps, info.size,
+					       0, priv->cap_buffers_num,
+					       &alignment);
+			gst_query_add_allocation_pool(query, priv->sink_pool,
+						      info.size,
+						      0, priv->cap_buffers_num);
+		} else {
+			GST_WARNING("Failed to wait VIDIOC_REQBUF.");
+		}
 	}
 
 	return GST_PAD_PROBE_OK;
@@ -2934,12 +2947,17 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 static GstBuffer *
 peek_first_cap_buffer(struct v4l_gst *priv)
 {
-	GstBuffer *gstbuf;
+	GstBuffer *gstbuf = NULL;
+	gboolean signaled = TRUE;
+	gint64 end_time;
 
 	g_mutex_lock(&priv->queue_mutex);
 	gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
-	while (!gstbuf) {
-		g_cond_wait(&priv->queue_cond, &priv->queue_mutex);
+	while (signaled && !gstbuf) {
+		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
+		signaled = g_cond_wait_until(&priv->queue_cond,
+					     &priv->queue_mutex,
+					     end_time);
 		gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
@@ -2947,15 +2965,25 @@ peek_first_cap_buffer(struct v4l_gst *priv)
 	return gstbuf;
 }
 
-static void
+static gboolean
 wait_for_all_bufs_collected(struct v4l_gst *priv,
 			    guint max_buffers)
 {
+	GQueue *queue = priv->req_gstbufs_queue;
+	gboolean succeeded = TRUE;
+	gint64 end_time;
+
 	g_mutex_lock(&priv->queue_mutex);
-	while (g_queue_get_length(priv->req_gstbufs_queue) <
-	       max_buffers)
-		g_cond_wait(&priv->queue_cond, &priv->queue_mutex);
+	while (succeeded && g_queue_get_length(queue) < max_buffers) {
+		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
+		succeeded = g_cond_wait_until(&priv->queue_cond,
+					      &priv->queue_mutex,
+					      end_time);
+	}
+	succeeded = g_queue_get_length(queue) >= max_buffers;
 	g_mutex_unlock(&priv->queue_mutex);
+
+	return succeeded;
 }
 
 static gboolean
@@ -2986,6 +3014,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	GstBuffer *first_gstbuf;
 	guint actual_max_buffers;
 	gint i, j;
+	gboolean succeeded;
 
 	if (priv->cap_buffers)
 		/* Cannot realloc the buffers without stopping the pipeline,
@@ -3029,13 +3058,17 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	g_mutex_unlock(&priv->dev_lock);
-
 	/* We wait for buffers from appsink to be collected for
 	   the maximum number of the buffer pool. */
-	wait_for_all_bufs_collected(priv, actual_max_buffers);
-
+	g_mutex_unlock(&priv->dev_lock);
+	succeeded = wait_for_all_bufs_collected(priv, actual_max_buffers);
 	g_mutex_lock(&priv->dev_lock);
+
+	if (!succeeded) {
+		GST_ERROR("Failed to collect buffers for CAPTURE.");
+		errno = EINVAL;
+		return 0;
+	}
 
 	priv->cap_buffers = g_new0(struct v4l_gst_buffer, actual_max_buffers);
 
@@ -3142,7 +3175,6 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 
 	g_mutex_lock(&priv->cap_reqbuf_mutex);
 	priv->cap_buffers_num = MIN(req->count, VIDEO_MAX_FRAME);
-
 	g_cond_signal(&priv->cap_reqbuf_cond);
 	g_mutex_unlock(&priv->cap_reqbuf_mutex);
 
