@@ -3104,64 +3104,72 @@ create_cap_buffers_list(struct v4l_gst *priv)
 }
 
 static int
+stop_pipeline(struct v4l_gst *priv)
+{
+	GstStateChangeReturn state_ret;
+	int ret = 0;
+	gint i;
+
+	GST_DEBUG("req->count == 0, stop the pipeline");
+
+	state_ret = gst_element_set_state(priv->pipeline,
+					  GST_STATE_NULL);
+	while (state_ret == GST_STATE_CHANGE_ASYNC) {
+		/* This API blocks up to the ASYNC state change completion. */
+		g_mutex_unlock(&priv->dev_lock);
+		state_ret = gst_element_get_state(priv->pipeline, NULL,
+						  NULL,
+						  GST_CLOCK_TIME_NONE);
+		g_mutex_lock(&priv->dev_lock);
+	}
+
+	if (state_ret != GST_STATE_CHANGE_SUCCESS) {
+		GST_ERROR("Failed to stop pipeline (ret:%s)",
+			  gst_element_state_change_return_get_name(state_ret));
+		errno = EINVAL;
+		ret = -1;
+		return ret;
+	}
+
+	g_atomic_int_set(&priv->is_cap_fmt_acquirable, 0);
+
+	for (i = 0; i < priv->cap_buffers_num; i++) {
+		if (priv->cap_buffers[i].state ==
+		    V4L_GST_BUFFER_DEQUEUED) {
+			gst_buffer_unref(priv->cap_buffers[i].gstbuf);
+		}
+	}
+
+	g_queue_clear(priv->req_gstbufs_queue);
+	g_queue_clear(priv->cap_gstbufs_queue);
+
+	g_mutex_lock(&priv->queue_mutex);
+	priv->is_pipeline_started = FALSE;
+	g_cond_broadcast(&priv->queue_cond);
+	g_mutex_unlock(&priv->queue_mutex);
+
+	if (priv->cap_buffers) {
+		g_free(priv->cap_buffers);
+		priv->cap_buffers = NULL;
+	}
+	init_decoded_frame_params(&priv->cap_fmt);
+
+	return ret;
+}
+
+static int
 reqbuf_ioctl_cap(struct v4l_gst *priv,
 		 struct v4l2_requestbuffers *req)
 {
-	GstStateChangeReturn state_ret;
-	int ret;
-	gint i;
+	int ret = -1;
 
 	if (!is_supported_memory_io(req->memory))
-		return -1;
+		return ret;
 
 	g_mutex_lock(&priv->dev_lock);
 
 	if (req->count == 0) {
-		GST_DEBUG("req->count == 0");
-
-		state_ret = gst_element_set_state(priv->pipeline,
-						  GST_STATE_NULL);
-		while (state_ret == GST_STATE_CHANGE_ASYNC) {
-			/* This API blocks up to the ASYNC state change completion. */
-			g_mutex_unlock(&priv->dev_lock);
-			state_ret = gst_element_get_state(priv->pipeline, NULL,
-							  NULL,
-							  GST_CLOCK_TIME_NONE);
-			g_mutex_lock(&priv->dev_lock);
-		}
-
-		if (state_ret != GST_STATE_CHANGE_SUCCESS) {
-			GST_ERROR("Failed to stop pipeline (ret:%s)",
-				  gst_element_state_change_return_get_name(state_ret));
-			errno = EINVAL;
-			ret = -1;
-			goto unlock;
-		}
-
-		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 0);
-
-		for (i = 0; i < priv->cap_buffers_num; i++) {
-			if (priv->cap_buffers[i].state ==
-			    V4L_GST_BUFFER_DEQUEUED) {
-				gst_buffer_unref(priv->cap_buffers[i].gstbuf);
-			}
-		}
-
-		g_queue_clear(priv->req_gstbufs_queue);
-		g_queue_clear(priv->cap_gstbufs_queue);
-
-		g_mutex_lock(&priv->queue_mutex);
-		priv->is_pipeline_started = FALSE;
-		g_cond_broadcast(&priv->queue_cond);
-		g_mutex_unlock(&priv->queue_mutex);
-
-		if (priv->cap_buffers) {
-			g_free(priv->cap_buffers);
-			priv->cap_buffers = NULL;
-		}
-		init_decoded_frame_params(&priv->cap_fmt);
-
-		ret = 0;
+		ret = stop_pipeline(priv);
 		goto unlock;
 	}
 
@@ -3169,7 +3177,6 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 		GST_ERROR("Need to start the pipeline for the buffer request "
 			  "on CAPTURE");
 		errno = EINVAL;
-		ret = -1;
 		goto unlock;
 	}
 
@@ -3179,10 +3186,8 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 	g_mutex_unlock(&priv->cap_reqbuf_mutex);
 
 	req->count = priv->cap_buffers_num = create_cap_buffers_list(priv);
-	if (req->count == 0) {
-		ret = -1;
+	if (req->count == 0)
 		goto unlock;
-	}
 
 	GST_DEBUG("buffers count=%d", req->count);
 
