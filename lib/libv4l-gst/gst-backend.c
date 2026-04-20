@@ -723,22 +723,34 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 {
 	guint stride_align, i;
 
-	/* ARM Mali requires strict allocation alignment for each color format.
-	   ref: https://github.com/renesas-rz/gst-plugins-bad/commit/728304b71301f909142bd2d29099a8fc370e5e25
-	 */
+	/* In dma-buffer, ARM Mali requires strict allocation alignment for each
+	   color format (NV12, NV21, YV12, IYUV, I420, IMC1, IMC2, IMC3, IMC4,
+	   P210, P010 require 16-byte alignment. Others require 64-byte alignment)
+	   refs:
+	   https://github.com/renesas-rz/gst-plugins-bad/commit/728304b71301f909142bd2d29099a8fc370e5e25
+	   https://github.com/renesas-rz/gst-plugins-bad/commit/79f3733bb085d07a78e996bf8d935ad31d43c7b1
+	   https://github.com/renesas-rz/gst-plugins-bad/commit/e07995fa6e7c24868008826f177d9eaf9c1f88e1
+
+	   GstVideoAlignment::stride_align is a bitmask, not an alignment value.
+	   It must be specified as a bitmask of the form (2^n - 1).
+	   gst_video_info_align_full() checks alignment using:
+
+	     (stride & stride_align) == 0
+
+	   e.g.)
+	     16-byte alignment -> 15 (0b1111)
+	     64-byte alignment -> 63 (0b111111) */
 	switch (priv->cap_fmt.pixelformat) {
-	case GST_VIDEO_FORMAT_BGRA:
-	case GST_VIDEO_FORMAT_BGRx:
-		stride_align = 64;
-		break;
 	case GST_VIDEO_FORMAT_RGB16:
 	case GST_VIDEO_FORMAT_NV12:
-	case GST_VIDEO_FORMAT_YUY2:
-		stride_align = 16;
+	case GST_VIDEO_FORMAT_NV21:
+	case GST_VIDEO_FORMAT_YV12:
+	case GST_VIDEO_FORMAT_I420:
+	case GST_VIDEO_FORMAT_P010_10LE:
+		stride_align = 15;
 		break;
 	default:
-		/* Not confirmed */
-		stride_align = 0;
+		stride_align = 63;
 		break;
 	}
 
