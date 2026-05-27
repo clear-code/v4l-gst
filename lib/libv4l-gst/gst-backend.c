@@ -50,9 +50,9 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_ioctl_debug_category);
 GST_DEBUG_CATEGORY_STATIC(v4l_gst_buffer_debug_category);
 
 #define DEF_CAP_MIN_BUFFERS		2
-#define INPUT_BUFFERING_CNT		16 // must be <= than VIDEO_MAX_FRAME
+#define INPUT_BUFFERING_CNT		16 // must be <= VIDEO_MAX_FRAME
 
-#define FMTDESC_NAME_LENGTH		32  //The same size as defined int the V4L2 spec
+#define FMTDESC_NAME_LENGTH		32  // The same size as defined in the V4L2 spec
 
 enum buffer_state {
 	V4L_GST_BUFFER_QUEUED,
@@ -144,7 +144,7 @@ struct v4l_gst {
 		gint max_height;
 		guint32 preferred_format;
 		guint32 fixed_pipeline;
-		GHashTable *pipelines; /* gchar *fourcc, gchar *pipeine */
+		GHashTable *pipelines; /* gchar *fourcc, gchar *pipeline */
 		gchar *pool_lib_path;
 		FrameCheckType frame_check;
 	} config;
@@ -889,11 +889,11 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 
 		if ((src_width  && src_width  != info.width) ||
 		    (src_height && src_height != info.height)) {
-			/* Sometimes decoder may send iterim resolutions that
+			/* Sometimes decoder may send interim resolutions that
 			   differ from the original one (typically 16x16
 			   macroblock based one: e.g. 640x368 vs 640x360) before
-			   sending finally determined resolution.
-			   Skip such interim resolutions then wait original one.
+			   sending the final resolution.
+			   Skip such interim resolutions then wait for the original one.
 			*/
 			return GST_PAD_PROBE_OK;
 		}
@@ -1171,7 +1171,7 @@ init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 	}
 
 	if (!priv->pipeline) {
-		GST_ERROR("Failed to create pipieline for %s", fourcc_str);
+		GST_ERROR("Failed to create pipeline for %s", fourcc_str);
 		goto error;
 	}
 
@@ -1582,7 +1582,7 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 	pix_fmt->num_planes = priv->cap_fmt.num_planes;
 
 	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
-	GST_DEBUG("width:%d height:%d, format: %s (0x%x) num_plnaes=%d",
+	GST_DEBUG("width:%d height:%d, format: %s (0x%x) num_planes=%d",
 		  pix_fmt->width, pix_fmt->height,
 		  fourcc_str, pix_fmt->pixelformat,
 		  pix_fmt->num_planes);
@@ -1937,7 +1937,7 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	/* Rewrap an input buffer with the just size of bytesused
 	   because it will be regarded as having data filled to the entire
-	   buffer size internally in the GStreame pipeline.
+	   buffer size internally in the GStreamer pipeline.
 	   Also set the destructor (notify_unref()). */
 
 	if (!gst_buffer_map(buffer->gstbuf, &info, GST_MAP_READ)) {
@@ -2441,9 +2441,9 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		bytesused[i] = priv->cap_fmt.plane_fmt[i].sizeimage;
 
 	if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
-		/* It might be occurred when a buffer is unexpectedly queued
+		/* It might occur when a buffer is unexpectedly queued
 		   after streamoff_ioctl_out(). In this case reference count of
-		   the buffer should have been already incremeneted, need to
+		   the buffer should already have been incremented, need to
 		   revert it here. */
 		GST_WARNING("Already dequeued buffer %u is dequeued again", index);
 		gst_buffer_unref(priv->cap_buffers[index].gstbuf);
@@ -2830,14 +2830,14 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	if (steal_ref)
 		gst_buffer_ref(priv->out_buffers[0].gstbuf);
 
-	/* wake up blocking of the OUTPUT buffers acquistion */
+	/* wake up blocking of the OUTPUT buffer acquisition */
 	if (!gst_buffer_pool_set_active(priv->src_pool, FALSE)) {
 		GST_ERROR("Failed to inactivate buffer pool on OUTPUT");
 		errno = EINVAL;
 		return -1;
 	}
 
-	/* wake up blocking of the CAPTURE buffers acquistion */
+	/* wake up blocking of the CAPTURE buffer acquisition */
 	g_mutex_lock(&priv->queue_mutex);
 	priv->is_pipeline_started = FALSE;
 	g_cond_broadcast(&priv->queue_cond);
@@ -3660,7 +3660,7 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 
 	mem = gst_buffer_peek_memory(buffer->gstbuf, mem_index);
 	if (!mem || !gst_is_dmabuf_memory(mem)) {
-		GST_ERROR("Failed to get dambuf emmory.");
+		GST_ERROR("Failed to get dmabuf memory.");
 		errno = EINVAL;
 		return -1;
 	}

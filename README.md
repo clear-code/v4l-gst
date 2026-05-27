@@ -11,8 +11,8 @@ updates.
 Dependencies
 ============
 
-* v4lutils - with patches provide [here](https://github.com/igel-oss/v4l-utils)
-* [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (i.e Porter)
+* v4lutils - with patches provided [here](https://github.com/igel-oss/v4l-utils)
+* [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (e.g. Porter)
 
 Compile
 =======
@@ -29,7 +29,7 @@ The setting file location is `/etc/xdg/libv4l-gst.conf`
 ### Settings
 
 **max-width**: The maximum width of the video that can be decoded through the plugin (default: 1920)  
-**max-height**: The maximum width of the video that can be decoded through the plugin (default: 1080)   
+**max-height**: The maximum height of the video that can be decoded through the plugin (default: 1080)
 **bufferpool-library**: Path to the library that provides buffer pools for input and output nodes  
 **min-buffers**: The minimum number of buffers for each of the above buffer pools  
 
@@ -63,4 +63,3 @@ Create a dummy V4L2 device file under /dev
 ```
 Accessing the /dev/video-gst file will allow an application to use the v4l-gst plugin
 using the same API as a regular V4L2 device file.
-
