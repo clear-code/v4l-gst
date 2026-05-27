@@ -741,12 +741,14 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 	     16-byte alignment -> 15 (0b1111)
 	     64-byte alignment -> 63 (0b111111) */
 	switch (priv->cap_fmt.pixelformat) {
-	case GST_VIDEO_FORMAT_RGB16:
-	case GST_VIDEO_FORMAT_NV12:
-	case GST_VIDEO_FORMAT_NV21:
-	case GST_VIDEO_FORMAT_YV12:
-	case GST_VIDEO_FORMAT_I420:
-	case GST_VIDEO_FORMAT_P010_10LE:
+	case V4L2_PIX_FMT_RGB565:
+	case V4L2_PIX_FMT_NV12:
+	case V4L2_PIX_FMT_NV21:
+	case V4L2_PIX_FMT_YVU420:
+	case V4L2_PIX_FMT_YUV420:
+#ifdef V4L2_PIX_FMT_P010
+	case V4L2_PIX_FMT_P010:
+#endif
 		stride_align = 15;
 		break;
 	default:
@@ -3746,7 +3748,7 @@ queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		fourcc_to_string(V4L2_PIX_FMT_H264, fourcc_str);
+		fourcc_to_string(V4L2_PIX_FMT_HEVC, fourcc_str);
 		if (g_hash_table_lookup(priv->config.pipelines, fourcc_str)) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
