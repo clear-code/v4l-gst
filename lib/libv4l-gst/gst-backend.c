@@ -741,7 +741,6 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 	     16-byte alignment -> 15 (0b1111)
 	     64-byte alignment -> 63 (0b111111) */
 	switch (priv->cap_fmt.pixelformat) {
-	case V4L2_PIX_FMT_RGB565:
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 	case V4L2_PIX_FMT_YVU420:
@@ -771,8 +770,11 @@ set_buffer_pool_params(GstBufferPool *pool, GstCaps *caps, guint buf_size,
 	config = gst_buffer_pool_get_config(pool);
 	gst_buffer_pool_config_set_params(config, caps, buf_size, min_buffers,
 					  max_buffers);
-	if (alignment)
+	if (alignment) {
+		gst_buffer_pool_config_add_option
+			(config, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
 		gst_buffer_pool_config_set_video_alignment(config, alignment);
+	}
 	gst_buffer_pool_set_config(pool, config);
 }
 
