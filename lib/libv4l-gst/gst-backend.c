@@ -51,6 +51,7 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_buffer_debug_category);
 
 #define DEF_CAP_MIN_BUFFERS		2
 #define INPUT_BUFFERING_CNT		16 // must be <= VIDEO_MAX_FRAME
+#define INITIAL_BUFFER_WAIT_TIMEOUT	(10 * G_TIME_SPAN_SECOND)
 
 #define FMTDESC_NAME_LENGTH		32  // The same size as defined in the V4L2 spec
 
@@ -130,6 +131,7 @@ struct v4l_gst {
 	   to be set in pad_probe_query() */
 	GMutex cap_reqbuf_mutex;
 	GCond cap_reqbuf_cond;
+	gboolean cancel_cap_reqbuf_wait;
 	int is_cap_fmt_acquirable;
 	gint out_cnt;
 
@@ -825,21 +827,44 @@ retrieve_cap_format_info(struct v4l_gst *priv, GstVideoInfo *info)
 	priv->cap_fmt.num_planes = info->finfo->n_planes;
 }
 
+static void
+set_pipeline_started(struct v4l_gst *priv, gboolean started)
+{
+	g_mutex_lock(&priv->cap_reqbuf_mutex);
+	priv->cancel_cap_reqbuf_wait = !started;
+	if (!started)
+		g_cond_broadcast(&priv->cap_reqbuf_cond);
+	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+
+	g_mutex_lock(&priv->queue_mutex);
+	priv->is_pipeline_started = started;
+	if (!started)
+		g_cond_broadcast(&priv->queue_cond);
+	g_mutex_unlock(&priv->queue_mutex);
+}
+
 static gboolean
 wait_for_cap_reqbuf_invocation(struct v4l_gst *priv)
 {
-	gboolean succeeded = TRUE;
+	gboolean succeeded;
+	gboolean timed_out = FALSE;
 	gint64 end_time;
 
 	g_mutex_lock(&priv->cap_reqbuf_mutex);
-	while (succeeded && priv->cap_buffers_num <= 0) {
-		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
-		succeeded = g_cond_wait_until(&priv->cap_reqbuf_cond,
-					      &priv->cap_reqbuf_mutex,
-					      end_time);
+	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+	while (!priv->cancel_cap_reqbuf_wait && priv->cap_buffers_num <= 0) {
+		if (!g_cond_wait_until(&priv->cap_reqbuf_cond,
+				       &priv->cap_reqbuf_mutex,
+				       end_time)) {
+			timed_out = TRUE;
+			break;
+		}
 	}
-	succeeded = priv->cap_buffers_num > 0;
+	succeeded = !priv->cancel_cap_reqbuf_wait && priv->cap_buffers_num > 0;
 	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+
+	if (timed_out && !succeeded)
+		GST_WARNING("Timed out waiting VIDIOC_REQBUFS on CAPTURE.");
 
 	return succeeded;
 }
@@ -1307,6 +1332,8 @@ void
 gst_backend_deinit(struct v4l_gst *priv)
 {
 	GST_DEBUG("gst_backend_deinit start");
+
+	set_pipeline_started(priv, FALSE);
 
 	g_mutex_clear(&priv->dev_lock);
 
@@ -2802,6 +2829,8 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
 		      "STREAMOFF OUT begin: dequeue all OUT & CAP buffers ...");
 
+	set_pipeline_started(priv, FALSE);
+
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		/* No need to flush the pipeline after it has been
@@ -2842,10 +2871,7 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	}
 
 	/* wake up blocking of the CAPTURE buffer acquisition */
-	g_mutex_lock(&priv->queue_mutex);
-	priv->is_pipeline_started = FALSE;
-	g_cond_broadcast(&priv->queue_cond);
-	g_mutex_unlock(&priv->queue_mutex);
+	set_pipeline_started(priv, FALSE);
 
 	GST_CAT_DEBUG(v4l_gst_buffer_debug_category, "STREAMOFF OUT end");
 
@@ -2964,19 +2990,25 @@ static GstBuffer *
 peek_first_cap_buffer(struct v4l_gst *priv)
 {
 	GstBuffer *gstbuf = NULL;
-	gboolean signaled = TRUE;
+	gboolean timed_out = FALSE;
 	gint64 end_time;
 
 	g_mutex_lock(&priv->queue_mutex);
 	gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
-	while (signaled && !gstbuf) {
-		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
-		signaled = g_cond_wait_until(&priv->queue_cond,
-					     &priv->queue_mutex,
-					     end_time);
+	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+	while (!gstbuf && priv->is_pipeline_started) {
+		if (!g_cond_wait_until(&priv->queue_cond,
+				       &priv->queue_mutex,
+				       end_time)) {
+			timed_out = TRUE;
+			break;
+		}
 		gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
+
+	if (timed_out && !gstbuf)
+		GST_WARNING("Timed out waiting the first CAPTURE buffer.");
 
 	return gstbuf;
 }
@@ -2986,18 +3018,26 @@ wait_for_all_bufs_collected(struct v4l_gst *priv,
 			    guint max_buffers)
 {
 	GQueue *queue = priv->req_gstbufs_queue;
-	gboolean succeeded = TRUE;
+	gboolean succeeded;
+	gboolean timed_out = FALSE;
 	gint64 end_time;
 
 	g_mutex_lock(&priv->queue_mutex);
-	while (succeeded && g_queue_get_length(queue) < max_buffers) {
-		end_time = g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND;
-		succeeded = g_cond_wait_until(&priv->queue_cond,
-					      &priv->queue_mutex,
-					      end_time);
+	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+	while (g_queue_get_length(queue) < max_buffers &&
+	       priv->is_pipeline_started) {
+		if (!g_cond_wait_until(&priv->queue_cond,
+				       &priv->queue_mutex,
+				       end_time)) {
+			timed_out = TRUE;
+			break;
+		}
 	}
 	succeeded = g_queue_get_length(queue) >= max_buffers;
 	g_mutex_unlock(&priv->queue_mutex);
+
+	if (timed_out && !succeeded)
+		GST_WARNING("Timed out waiting CAPTURE buffers.");
 
 	return succeeded;
 }
@@ -3042,6 +3082,12 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	first_gstbuf = peek_first_cap_buffer(priv);
 
 	g_mutex_lock(&priv->dev_lock);
+
+	if (!first_gstbuf) {
+		GST_ERROR("Failed to wait for the first CAPTURE buffer.");
+		errno = EINVAL;
+		return 0;
+	}
 
 	if (!first_gstbuf->pool) {
 		GST_ERROR("Cannot handle buffers not belonging to "
@@ -3128,6 +3174,8 @@ stop_pipeline(struct v4l_gst *priv)
 
 	GST_DEBUG("req->count == 0, stop the pipeline");
 
+	set_pipeline_started(priv, FALSE);
+
 	state_ret = gst_element_set_state(priv->pipeline,
 					  GST_STATE_NULL);
 	while (state_ret == GST_STATE_CHANGE_ASYNC) {
@@ -3159,15 +3207,13 @@ stop_pipeline(struct v4l_gst *priv)
 	g_queue_clear(priv->req_gstbufs_queue);
 	g_queue_clear(priv->cap_gstbufs_queue);
 
-	g_mutex_lock(&priv->queue_mutex);
-	priv->is_pipeline_started = FALSE;
-	g_cond_broadcast(&priv->queue_cond);
-	g_mutex_unlock(&priv->queue_mutex);
+	set_pipeline_started(priv, FALSE);
 
 	if (priv->cap_buffers) {
 		g_free(priv->cap_buffers);
 		priv->cap_buffers = NULL;
 	}
+	priv->cap_buffers_num = 0;
 	init_decoded_frame_params(&priv->cap_fmt);
 
 	return ret;
@@ -3341,9 +3387,9 @@ streamon_ioctl_out(struct v4l_gst *priv)
 
 	priv->eos_state = EOS_NONE;
 
-	gst_element_set_state(priv->pipeline, GST_STATE_PLAYING);
+	set_pipeline_started(priv, TRUE);
 
-	priv->is_pipeline_started = TRUE;
+	gst_element_set_state(priv->pipeline, GST_STATE_PLAYING);
 
 	g_mutex_unlock(&priv->dev_lock);
 
