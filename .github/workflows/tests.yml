@@ -29,9 +29,14 @@ jobs:
 
     - name: Build
       run: |
-        chmod +x ./scripts/bootstrap-tests.sh
-        SKIP_CHECK=1 ./scripts/bootstrap-tests.sh
+        chmod +x ./scripts/build.sh
+        ./scripts/build.sh
 
     - name: Run tests
       run: |
         make check
+
+    - name: Verify release build
+      run: |
+        make distclean
+        BUILD_MODE=release ./scripts/build.sh

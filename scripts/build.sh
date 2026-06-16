@@ -3,7 +3,7 @@ set -eu
 # Bootstrap and run tests for this repository. This script will:
 # - ensure v4l-utils submodule is built into _install_root/usr (if needed)
 # - ensure cutter is available (system or build submodule into _local)
-# - configure (if needed), build (if needed) and run `make check`
+# - configure (if needed), build (if needed)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -48,43 +48,48 @@ if [ ! -d "$V4L_DIR" ]; then
     fi
 fi
 
-# Cutter: prefer system cutter; otherwise use local installed copy or build
-if command -v cutter >/dev/null 2>&1; then
-    echo "cutter found in PATH; skipping cutter build"
-elif [ -x "$ROOT/_local/bin/cutter" ]; then
-    echo "Using existing local cutter at $ROOT/_local/bin/cutter"
-    export PATH="$ROOT/_local/bin:$PATH"
-    export PKG_CONFIG_PATH="$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+# Cutter: prefer system cutter; otherwise build the submodule when doing test builds
+BUILD_MODE="${BUILD_MODE-test}"
+if [ "$BUILD_MODE" = "release" ]; then
+    echo "BUILD_MODE=release: skipping cutter build (unit test harness not required)"
 else
-    echo "cutter not found — attempting to build from submodule..."
-    git submodule update --init --recursive cutter || {
-        echo "cutter submodule not present; please add or install cutter." >&2
-        exit 1
-    }
-
-    cd "$ROOT/cutter"
-    if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
-        CBUILD=builddir
-        if [ ! -d "$CBUILD" ]; then
-            meson setup "$CBUILD" --prefix=/usr
-        else
-            meson setup --reconfigure "$CBUILD" --prefix=/usr
-        fi
-        ninja -C "$CBUILD" -j"$(nproc)"
-        DESTDIR="$ROOT/_local" ninja -C "$CBUILD" install
-    elif [ -f configure.ac ] || [ -f configure ]; then
-        autoreconf -fi
-        ./configure --prefix="$ROOT/_local"
-        make -j"$(nproc)"
-        make install
+    if command -v cutter >/dev/null 2>&1; then
+        echo "cutter found in PATH; skipping cutter build"
+    elif [ -x "$ROOT/_local/bin/cutter" ] || [ -x "$ROOT/_local/usr/bin/cutter" ]; then
+        echo "Using existing local cutter at $ROOT/_local/usr/bin or $ROOT/_local/bin"
+        export PATH="$ROOT/_local/usr/bin:$ROOT/_local/bin:$PATH"
+        export PKG_CONFIG_PATH="$ROOT/_local/usr/lib/pkgconfig:$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
     else
-        echo "Could not detect build system for cutter; install cutter manually." >&2
-        exit 1
-    fi
+        echo "cutter not found — attempting to build from submodule..."
+        git submodule update --init --recursive cutter || {
+            echo "cutter submodule not present; please add or install cutter." >&2
+            exit 1
+        }
 
-    cd "$ROOT"
-    export PATH="$ROOT/_local/usr/bin:$ROOT/_local/bin:$PATH"
-    export PKG_CONFIG_PATH="$ROOT/_local/usr/lib/pkgconfig:$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+        cd "$ROOT/cutter"
+        if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
+            CBUILD=builddir
+            if [ ! -d "$CBUILD" ]; then
+                meson setup "$CBUILD" --prefix=/usr
+            else
+                meson setup --reconfigure "$CBUILD" --prefix=/usr
+            fi
+            ninja -C "$CBUILD" -j"$(nproc)"
+            DESTDIR="$ROOT/_local" ninja -C "$CBUILD" install
+        elif [ -f configure.ac ] || [ -f configure ]; then
+            autoreconf -fi
+            ./configure --prefix="$ROOT/_local"
+            make -j"$(nproc)"
+            make install
+        else
+            echo "Could not detect build system for cutter; install cutter manually." >&2
+            exit 1
+        fi
+
+        cd "$ROOT"
+        export PATH="$ROOT/_local/usr/bin:$ROOT/_local/bin:$PATH"
+        export PKG_CONFIG_PATH="$ROOT/_local/usr/lib/pkgconfig:$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+    fi
 fi
 
 # Configure & build the project only when needed
@@ -97,7 +102,12 @@ else
     export PKG_CONFIG_PATH="$V4L_DIR/lib/pkgconfig:${PKG_CONFIG_PATH-}"
     export CPPFLAGS="-I$V4L_DIR/include ${CPPFLAGS-}"
     export LDFLAGS="-L$V4L_DIR/lib ${LDFLAGS-}"
-    ./configure --enable-unit-tests --with-libv4l-dir="$V4L_DIR"
+    if [ "$BUILD_MODE" = "release" ]; then
+        echo "Configuring release build (unit tests disabled)"
+        ./configure --with-libv4l-dir="$V4L_DIR"
+    else
+        ./configure --enable-unit-tests --with-libv4l-dir="$V4L_DIR"
+    fi
 fi
 
 if make -q >/dev/null 2>&1; then
@@ -106,11 +116,4 @@ else
     make -j"$(nproc)"
 fi
 
-# If SKIP_CHECK is set to "1", skip running `make check` so CI can run
-# the build and tests as separate named steps within the same job.
-if [ "${SKIP_CHECK-}" = "1" ]; then
-    echo "SKIP_CHECK=1: skipping 'make check'"
-    exit 0
-fi
-
-make check
+echo "Build finished (BUILD_MODE=$BUILD_MODE)"

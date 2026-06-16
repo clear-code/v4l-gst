@@ -43,7 +43,7 @@ The following settings are for the Renesas Porter board,
 but they may be updated to use more generic settings.
 
 
-```
+```ini
 [libv4l-gst]
 min-buffers=2
 
@@ -58,27 +58,34 @@ Running
 =======
 
 Create a dummy V4L2 device file under /dev
-```
+```console
 # touch /dev/video-gst
 # chmod 666 /dev/video-gst
 ```
 Accessing the /dev/video-gst file will allow an application to use the v4l-gst plugin
 using the same API as a regular V4L2 device file.
 
-Building and running unit tests
-===============================
+Building and running unit tests on PC
+=====================================
+
+## Overview
+
+Although this software intends to build on Yocto, you can run unit tests on GNU/Linux PC
+using in-tree v4l-utils.
 
 ## Prerequisites
 
 In addition to developer tools for standard build, need following tools:
 
 * [`cutter`](https://github.com/clear-code/cutter)
-* meson (to build v4l-utils)
+* meson (to build in-tree v4l-utils)
+
+See [the CI workflow](./.github/workflows/tests.yml) for more detail.
 
 ## Build
 
 ```console
-./scripts/bootstrap-tests.sh
+$ ./scripts/build.sh
 ```
 
 ## Run tests
