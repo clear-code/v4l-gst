@@ -106,4 +106,11 @@ else
     make -j"$(nproc)"
 fi
 
+# If SKIP_CHECK is set to "1", skip running `make check` so CI can run
+# the build and tests as separate named steps within the same job.
+if [ "${SKIP_CHECK-}" = "1" ]; then
+    echo "SKIP_CHECK=1: skipping 'make check'"
+    exit 0
+fi
+
 make check

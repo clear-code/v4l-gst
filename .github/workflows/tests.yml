@@ -27,7 +27,11 @@ jobs:
       run: |
         pip3 install --upgrade meson ninja
 
-    - name: Run bootstrap and tests
+    - name: Build
       run: |
         chmod +x ./scripts/bootstrap-tests.sh
-        ./scripts/bootstrap-tests.sh
+        SKIP_CHECK=1 ./scripts/bootstrap-tests.sh
+
+    - name: Run tests
+      run: |
+        make check
