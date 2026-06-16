@@ -64,3 +64,25 @@ Create a dummy V4L2 device file under /dev
 ```
 Accessing the /dev/video-gst file will allow an application to use the v4l-gst plugin
 using the same API as a regular V4L2 device file.
+
+Building and running unit tests
+===============================
+
+## Prerequisites
+
+In addition to developer tools for standard build, need following tools:
+
+* [`cutter`](https://github.com/clear-code/cutter)
+* meson (to build v4l-utils)
+
+## Build
+
+```console
+./scripts/bootstrap-tests.sh
+```
+
+## Run tests
+
+```console
+$ make check
+```
