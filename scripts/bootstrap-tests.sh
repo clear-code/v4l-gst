@@ -23,9 +23,9 @@ if [ ! -d "$V4L_DIR" ]; then
     if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
         BUILD_DIR=builddir
         if [ ! -d "$BUILD_DIR" ]; then
-            meson setup "$BUILD_DIR" --prefix="$(pwd)/_install_root"
+            meson setup "$BUILD_DIR" --prefix=/usr
         else
-            meson setup --reconfigure "$BUILD_DIR" --prefix="$(pwd)/_install_root"
+            meson setup --reconfigure "$BUILD_DIR" --prefix=/usr
         fi
         ninja -C "$BUILD_DIR" -j"$(nproc)"
         DESTDIR="$(pwd)/_install_root" ninja -C "$BUILD_DIR" install
@@ -66,9 +66,9 @@ else
     if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
         CBUILD=builddir
         if [ ! -d "$CBUILD" ]; then
-            meson setup "$CBUILD" --prefix="$ROOT/_local"
+            meson setup "$CBUILD" --prefix=/usr
         else
-            meson setup --reconfigure "$CBUILD" --prefix="$ROOT/_local"
+            meson setup --reconfigure "$CBUILD" --prefix=/usr
         fi
         ninja -C "$CBUILD" -j"$(nproc)"
         DESTDIR="$ROOT/_local" ninja -C "$CBUILD" install
@@ -83,8 +83,8 @@ else
     fi
 
     cd "$ROOT"
-    export PATH="$ROOT/_local/bin:$PATH"
-    export PKG_CONFIG_PATH="$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+    export PATH="$ROOT/_local/usr/bin:$ROOT/_local/bin:$PATH"
+    export PKG_CONFIG_PATH="$ROOT/_local/usr/lib/pkgconfig:$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
 fi
 
 # Configure & build the project only when needed
