@@ -23,12 +23,12 @@ if [ ! -d "$V4L_DIR" ]; then
     if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
         BUILD_DIR=builddir
         if [ ! -d "$BUILD_DIR" ]; then
-            meson setup "$BUILD_DIR" --prefix=_install_root
+            meson setup "$BUILD_DIR" --prefix=/usr
         else
-            meson setup --reconfigure "$BUILD_DIR" --prefix=_install_root
+            meson setup --reconfigure "$BUILD_DIR" --prefix=/usr
         fi
         ninja -C "$BUILD_DIR" -j"$(nproc)"
-        ninja -C "$BUILD_DIR" install
+        DESTDIR="$(pwd)/_install_root" ninja -C "$BUILD_DIR" install
     elif [ -f configure.ac ] || [ -f configure ]; then
         autoreconf -fi
         ./configure --prefix="$(pwd)/_install_root"
@@ -66,12 +66,12 @@ else
     if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
         CBUILD=builddir
         if [ ! -d "$CBUILD" ]; then
-            meson setup "$CBUILD" --prefix="$ROOT/_local"
+            meson setup "$CBUILD" --prefix=/usr
         else
-            meson setup --reconfigure "$CBUILD" --prefix="$ROOT/_local"
+            meson setup --reconfigure "$CBUILD" --prefix=/usr
         fi
         ninja -C "$CBUILD" -j"$(nproc)"
-        ninja -C "$CBUILD" install
+        DESTDIR="$ROOT/_local" ninja -C "$CBUILD" install
     elif [ -f configure.ac ] || [ -f configure ]; then
         autoreconf -fi
         ./configure --prefix="$ROOT/_local"
@@ -83,8 +83,8 @@ else
     fi
 
     cd "$ROOT"
-    export PATH="$ROOT/_local/bin:$PATH"
-    export PKG_CONFIG_PATH="$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+    export PATH="$ROOT/_local/usr/bin:$ROOT/_local/bin:$PATH"
+    export PKG_CONFIG_PATH="$ROOT/_local/usr/lib/pkgconfig:$ROOT/_local/lib/pkgconfig:${PKG_CONFIG_PATH-}"
 fi
 
 # Configure & build the project only when needed
@@ -92,6 +92,11 @@ if [ -f config.status ] && [ -f Makefile ]; then
     echo "config.status and Makefile exist; skipping autoreconf/configure"
 else
     autoreconf -fi
+    # Ensure the configure script can find headers/libs installed into the
+    # v4l-utils local install tree.
+    export PKG_CONFIG_PATH="$V4L_DIR/lib/pkgconfig:${PKG_CONFIG_PATH-}"
+    export CPPFLAGS="-I$V4L_DIR/include ${CPPFLAGS-}"
+    export LDFLAGS="-L$V4L_DIR/lib ${LDFLAGS-}"
     ./configure --enable-unit-tests --with-libv4l-dir="$V4L_DIR"
 fi
 
