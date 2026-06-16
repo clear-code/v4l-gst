@@ -28,7 +28,7 @@ if [ ! -d "$V4L_DIR" ]; then
             meson setup --reconfigure "$BUILD_DIR" --prefix="$(pwd)/_install_root"
         fi
         ninja -C "$BUILD_DIR" -j"$(nproc)"
-        ninja -C "$BUILD_DIR" install DESTDIR="$(pwd)/_install_root"
+        DESTDIR="$(pwd)/_install_root" ninja -C "$BUILD_DIR" install
     elif [ -f configure.ac ] || [ -f configure ]; then
         autoreconf -fi
         ./configure --prefix="$(pwd)/_install_root"
@@ -71,7 +71,7 @@ else
             meson setup --reconfigure "$CBUILD" --prefix="$ROOT/_local"
         fi
         ninja -C "$CBUILD" -j"$(nproc)"
-        ninja -C "$CBUILD" install DESTDIR="$ROOT/_local"
+        DESTDIR="$ROOT/_local" ninja -C "$CBUILD" install
     elif [ -f configure.ac ] || [ -f configure ]; then
         autoreconf -fi
         ./configure --prefix="$ROOT/_local"
