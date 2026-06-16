@@ -4,7 +4,11 @@ include_HEADERS = $(top_srcdir)/lib/include/libv4l-gst-bufferpool.h
 
 noinst_HEADERS = gst-backend.h evfd-ctrl.h utils.h
 
+noinst_HEADERS += gst-backend-testhooks.h
+
 libv4l_gst_la_SOURCES = libv4l-gst.c gst-backend.c evfd-ctrl.c utils.c
+# gst-backend-testhooks.c is included into gst-backend.c directly,
+# do not compile it separately
 libv4l_gst_la_CFLAGS = $(GST_CFLAGS)
 libv4l_gst_la_CPPFLAGS = $(CFLAG_VISIBILITY)
 libv4l_gst_la_LIBADD = $(GST_LIBS)

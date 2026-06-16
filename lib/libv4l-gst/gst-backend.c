@@ -4200,3 +4200,5 @@ decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 
 	return ret;
 }
+
+#include "gst-backend-testhooks.c"

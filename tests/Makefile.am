@@ -21,6 +21,17 @@ test_utils_la_LIBADD = \
 	$(GST_LIBS) \
 	$(CUTTER_LIBS)
 test_utils_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir) -L$(with_libv4l_dir)/lib
+
+TESTS += test-gst-backend.la
+check_LTLIBRARIES += test-gst-backend.la
+
+test_gst_backend_la_SOURCES = \
+	test-gst-backend.c \
+	$(top_srcdir)/lib/libv4l-gst/utils.c
+test_gst_backend_la_LIBADD = \
+	$(GST_LIBS) \
+	$(CUTTER_LIBS)
+test_gst_backend_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir) -L$(with_libv4l_dir)/lib
 else
 TESTS =
 check_LTLIBRARIES =

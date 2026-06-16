@@ -59,6 +59,8 @@ if test "x$have_cutter" = "xyes"; then
 	  ac_cv_path_CUTTER="$CUTTER"
 	fi
 	CUTTER=$ac_cv_path_CUTTER
+	# Define UNIT_TESTS so test-only symbols are exposed to test sources
+	AC_DEFINE([UNIT_TESTS], [1], [Define to enable unit test hooks])
 else
 	HAVE_CUTTER_FALSE='#'
 	HAVE_CUTTER_TRUE=
@@ -94,7 +96,12 @@ if test "x$with_libv4l_dir" != "x"; then
 	EXTRA_LDFLAGS="-L$with_libv4l_dir/lib $EXTRA_LDFLAGS"
 else
 	if test -d "$srcdir/v4l-utils"; then
-		EXTRA_CPPFLAGS="-I\$(top_srcdir)/v4l-utils/include $EXTRA_CPPFLAGS"
+		# Prefer headers from v4l-utils _install_root if present (contains libv4l-plugin.h)
+		if test -d "$srcdir/v4l-utils/_install_root/usr/include" ; then
+			EXTRA_CPPFLAGS="-I\$(top_srcdir)/v4l-utils/_install_root/usr/include $EXTRA_CPPFLAGS"
+		else
+			EXTRA_CPPFLAGS="-I\$(top_srcdir)/v4l-utils/include $EXTRA_CPPFLAGS"
+		fi
 		EXTRA_LDFLAGS="-L\$(top_srcdir)/v4l-utils/lib $EXTRA_LDFLAGS"
 		# Normalize to an absolute path so subdir builds find it correctly
 		tmp_libv4l_dir="$srcdir/v4l-utils"
