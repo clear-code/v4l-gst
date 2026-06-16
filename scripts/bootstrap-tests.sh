@@ -23,9 +23,9 @@ if [ ! -d "$V4L_DIR" ]; then
     if [ -f meson.build ] && command -v meson >/dev/null 2>&1; then
         BUILD_DIR=builddir
         if [ ! -d "$BUILD_DIR" ]; then
-            meson setup "$BUILD_DIR" --prefix=_install_root
+            meson setup "$BUILD_DIR" --prefix="$(pwd)/_install_root"
         else
-            meson setup --reconfigure "$BUILD_DIR" --prefix=_install_root
+            meson setup --reconfigure "$BUILD_DIR" --prefix="$(pwd)/_install_root"
         fi
         ninja -C "$BUILD_DIR" -j"$(nproc)"
         ninja -C "$BUILD_DIR" install
