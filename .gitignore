@@ -40,3 +40,21 @@ builddir/
 # Ignore local installs
 _install/
 _install_root/
+
+# Autotools generated files and helpers
+aclocal.m4
+configure
+config.h
+config.h~
+config.log
+config.status
+config.cache
+Makefile.in
+autom4te.cache/
+
+# Autotools helper scripts that may be copied in
+install-sh
+missing
+depcomp
+compile
+ltmain.sh
