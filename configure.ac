@@ -12,6 +12,7 @@ AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_FILES([Makefile
 	lib/Makefile
 	lib/libv4l-gst/Makefile
+	tests/Makefile
 ])
 
 AC_GNU_SOURCE
@@ -31,11 +32,58 @@ PKG_PROG_PKG_CONFIG
 PKG_CHECK_MODULES(GST, gstreamer-video-1.0 >= 1.4 gstreamer-app-1.0
 		gstreamer-allocators-1.0)
 
+# Unit tests using Cutter (auto/enable)
+AC_ARG_ENABLE([unit-tests],
+	AS_HELP_STRING([--enable-unit-tests], [Enable unit tests that use Cutter (default=auto)]),
+	[],
+	[enable_unit_tests=auto])
+
+# Check for Cutter via pkg-config, allow overrides via CUTTER_CFLAGS/CUTTER_LIBS/CUTTER
+m4_pattern_allow([^CUTTER_CFLAGS$])
+m4_pattern_allow([^CUTTER_LIBS$])
+m4_pattern_allow([^CUTTER$])
+PKG_CHECK_MODULES([CUTTER], [cutter], [
+	AC_PATH_PROG([CUTTER], [cutter])
+	AS_IF([test "x$CUTTER" != "x"], [have_cutter=yes])
+],[have_cutter=no])
+AM_CONDITIONAL([HAVE_CUTTER], [test "x$have_cutter" = "xyes"])
+if test "x$have_cutter" = "xyes"; then
+	CUTTER_CFLAGS=$pkg_cv_CUTTER_CFLAGS
+	CUTTER_LIBS=$pkg_cv_CUTTER_LIBS
+	# Extract the first word of "cutter", so it can be a program name with args.
+	set dummy cutter; ac_word=$2
+	if test ${ac_cv_path_CUTTER+y}; then
+	  ac_cv_path_CUTTER="$CUTTER"
+	else
+	  AC_PATH_PROG([CUTTER], [cutter])
+	  ac_cv_path_CUTTER="$CUTTER"
+	fi
+	CUTTER=$ac_cv_path_CUTTER
+else
+	HAVE_CUTTER_FALSE='#'
+	HAVE_CUTTER_TRUE=
+fi
+AC_SUBST([CUTTER])
+AC_SUBST([CUTTER_CFLAGS])
+AC_SUBST([CUTTER_LIBS])
+
+if test "x$enable_unit_tests" = "xyes" && test "x$have_cutter" != "xyes"; then
+	as_fn_error $? "Cutter is needed for --enable-unit-tests" "$LINENO" 5
+fi
+
 # Allow using a local (vendored / submodule) libv4l tree.
 AC_ARG_WITH([libv4l-dir],
 	[AS_HELP_STRING([--with-libv4l-dir=DIR], [use local libv4l from DIR])],
 	[],
 	[with_libv4l_dir="$withval"])
+
+# Normalize user-provided path to absolute if needed
+if test "x$with_libv4l_dir" != "x"; then
+	case "$with_libv4l_dir" in
+		/*) ;;
+		*) with_libv4l_dir=`(cd "$with_libv4l_dir" && pwd)` ;;
+	esac
+fi
 
 # If user provided a dir, use its include/lib. If a v4l-utils subdirectory
 # exists, prefer that automatically.
@@ -48,7 +96,12 @@ else
 	if test -d "$srcdir/v4l-utils"; then
 		EXTRA_CPPFLAGS="-I\$(top_srcdir)/v4l-utils/include $EXTRA_CPPFLAGS"
 		EXTRA_LDFLAGS="-L\$(top_srcdir)/v4l-utils/lib $EXTRA_LDFLAGS"
-		with_libv4l_dir="$srcdir/v4l-utils"
+		# Normalize to an absolute path so subdir builds find it correctly
+		tmp_libv4l_dir="$srcdir/v4l-utils"
+		case "$tmp_libv4l_dir" in
+			/*) with_libv4l_dir="$tmp_libv4l_dir" ;;
+			*) with_libv4l_dir=`(cd "$tmp_libv4l_dir" && pwd)` ;;
+		esac
 	fi
 fi
 AC_SUBST([EXTRA_CPPFLAGS])
