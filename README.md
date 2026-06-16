@@ -11,8 +11,9 @@ updates.
 Dependencies
 ============
 
-* v4lutils - with patches provided [here](https://github.com/igel-oss/v4l-utils)
+* v4lutils - with patches provided [here](https://github.com/clear-code/v4l-utils/tree/scarthgap/v4l-utils-1.26.1)
 * [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (e.g. Porter)
+  * It's optional and not tested with recent v4l-gst
 
 Compile
 =======
