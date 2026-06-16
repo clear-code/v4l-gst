@@ -1,0 +1,4 @@
+[submodule "v4l-utils"]
+	path = v4l-utils
+	url = https://github.com/clear-code/v4l-utils
+	branch = scarthgap/v4l-utils-1.26.1

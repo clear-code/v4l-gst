@@ -31,6 +31,30 @@ PKG_PROG_PKG_CONFIG
 PKG_CHECK_MODULES(GST, gstreamer-video-1.0 >= 1.4 gstreamer-app-1.0
 		gstreamer-allocators-1.0)
 
+# Allow using a local (vendored / submodule) libv4l tree.
+AC_ARG_WITH([libv4l-dir],
+	[AS_HELP_STRING([--with-libv4l-dir=DIR], [use local libv4l from DIR])],
+	[],
+	[with_libv4l_dir="$withval"])
+
+# If user provided a dir, use its include/lib. If a v4l-utils subdirectory
+# exists, prefer that automatically.
+EXTRA_CPPFLAGS=""
+EXTRA_LDFLAGS=""
+if test "x$with_libv4l_dir" != "x"; then
+	EXTRA_CPPFLAGS="-I$with_libv4l_dir/include $EXTRA_CPPFLAGS"
+	EXTRA_LDFLAGS="-L$with_libv4l_dir/lib $EXTRA_LDFLAGS"
+else
+	if test -d "$srcdir/v4l-utils"; then
+		EXTRA_CPPFLAGS="-I\$(top_srcdir)/v4l-utils/include $EXTRA_CPPFLAGS"
+		EXTRA_LDFLAGS="-L\$(top_srcdir)/v4l-utils/lib $EXTRA_LDFLAGS"
+		with_libv4l_dir="$srcdir/v4l-utils"
+	fi
+fi
+AC_SUBST([EXTRA_CPPFLAGS])
+AC_SUBST([EXTRA_LDFLAGS])
+AC_SUBST([with_libv4l_dir])
+
 AC_ARG_WITH(libv4l2subdir,
         AS_HELP_STRING([--with-libv4l2subdir=DIR], [set libv4l2 library subdir (default=libv4l)]),
         [],
@@ -54,6 +78,7 @@ if test "x${enable_vidioc_debug}" = "xyes"; then
 		[Define if the specific debug operation to control VIDIOC features are enabled])
 fi
 
-CPPFLAGS="-I\$(top_srcdir)/lib/include -Wall -Wpointer-arith $CPPFLAGS"
+CPPFLAGS="-I\$(top_srcdir)/lib/include -Wall -Wpointer-arith $EXTRA_CPPFLAGS $CPPFLAGS"
+LDFLAGS="$EXTRA_LDFLAGS $LDFLAGS"
 
 AC_OUTPUT
