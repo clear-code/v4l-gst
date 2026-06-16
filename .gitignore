@@ -1,0 +1,42 @@
+# Autotools and build artifacts
+autom4te.cache/
+build-aux/
+config.log
+config.status
+configure
+configure~
+Makefile.in
+
+# libtool / object files
+.libs/
+*.lo
+*.la
+*.o
+*.so
+*.a
+
+# Dependency and stamp files
+*.Plo
+*.Po
+*.d
+*.dep
+*.dirstamp
+
+# VPATH / build directories
+builddir/
+
+# Test output
+*.log
+
+# Editor backups
+*~
+*.swp
+*.swo
+
+# Coverage
+*.gcda
+*.gcno
+
+# Ignore local installs
+_install/
+_install_root/
