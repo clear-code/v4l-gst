@@ -40,7 +40,7 @@ The setting file location is `/etc/xdg/libv4l-gst.conf`
   * **min-buffers** (default: `2`)
     * The minimum number of buffers for each of the above buffer pools
   * **preferred-format** (default: auto-detect or `NV12`)
-    * Preffered output format by FourCC (e.g. `AR24`)
+    * Preferred output format by FourCC (e.g. `AR24`)
   * **fixed-pipeline** (default: auto-detect)
     * Use fixed pipeline instead of auto-detecting
 	* Specify in one of the following FourCCs listed as section names (e.g. `H264`)
