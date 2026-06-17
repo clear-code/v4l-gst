@@ -25,20 +25,37 @@ $ ./configure
 
 Configuration
 =============
+
 The setting file location is `/etc/xdg/libv4l-gst.conf`
 
 ### Settings
 
-**max-width**: The maximum width of the video that can be decoded through the plugin (default: 1920)  
-**max-height**: The maximum height of the video that can be decoded through the plugin (default: 1080)
-**bufferpool-library**: Path to the library that provides buffer pools for input and output nodes  
-**min-buffers**: The minimum number of buffers for each of the above buffer pools  
-
-It also supports format specific configuration section:
-
-* **pipeline**: The GStreamer pipeline to be used.  Should include everything but the input and output nodes
+* `[libv4l-gst]` (global section)
+  * **max-width** (default: `1920`)
+    * The maximum width of the video that can be decoded through the plugin
+  * **max-height** (default: `1080`)
+    * The maximum height of the video that can be decoded through the plugin
+  * **bufferpool-library** (default: `NULL`)
+    * Path to the library that provides buffer pools for input and output nodes
+  * **min-buffers** (default: `2`)
+    * The minimum number of buffers for each of the above buffer pools
+  * **preferred-format** (default: auto-detect or `NV12`)
+    * Preffered output mode by FourCC (e.g. `AR24`)
+  * **fixed-pipeline** (default: auto-detect)
+    * Use fixed pipeline instead of auto-detecting
+	* Specify in one of the following FourCCs listed as section names (e.g. `H264`)
+* `[H264]`
+  * **pipeline**
+    * The GStreamer pipeline to be used
+	* `appsrc` and `appsink` are automatically inserted so you shouldn't include any other `src` or `sink` elements
+	* If `appsrc` and `appsink` are included manually with some attributes, most of them are honored
+	* You can use `tee` element here to split output for debugging.
+	  If you use it, you can use any `sink` elements (e.g. `waylandsink`) but one of them should be `appsink`.
+* `[H265]`
+  * Ditto
 
 ### Example
+
 The following settings are for the Renesas Porter board,
 but they may be updated to use more generic settings.
 
