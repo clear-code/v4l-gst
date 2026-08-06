@@ -2100,7 +2100,7 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 int
 qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
-	int ret;
+	int ret = -1;
 
 	GST_TRACE("VIDIOC_QBUF: type: %s (0x%x) index: %d flags: 0x%x",
 		  v4l2_buffer_type_to_string(v4l2buf->type), v4l2buf->type,
@@ -2110,21 +2110,11 @@ qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = qbuf_ioctl_out(priv, v4l2buf);
-		if (ret < 0) {
-			g_mutex_unlock(&priv->dev_lock);
-			return ret;
-		}
 	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		ret = qbuf_ioctl_cap(priv, v4l2buf);
-		if (ret < 0) {
-			g_mutex_unlock(&priv->dev_lock);
-			return 0;
-		}
 	} else {
 		GST_ERROR("Invalid buf type");
 		errno = EINVAL;
-		g_mutex_unlock(&priv->dev_lock);
-		return -1;
 	}
 
 	g_mutex_unlock(&priv->dev_lock);
@@ -2495,7 +2485,7 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 int
 dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
-	int ret;
+	int ret = -1;
 
 	GST_TRACE("VIDIOC_DQBUF: type: %s (0x%x) index: %d flags: 0x%x",
 		  v4l2_buffer_type_to_string(v4l2buf->type), v4l2buf->type,
@@ -2505,23 +2495,11 @@ dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = dqbuf_ioctl_out(priv, v4l2buf);
-		if (ret < 0) {
-			g_mutex_unlock(&priv->dev_lock);
-			return ret;
-		}
-
 	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		ret = dqbuf_ioctl_cap(priv, v4l2buf);
-		if (ret < 0) {
-			g_mutex_unlock(&priv->dev_lock);
-			return ret;
-		}
-
 	} else {
 		GST_ERROR("Invalid buf type");
 		errno = EINVAL;
-		g_mutex_unlock(&priv->dev_lock);
-		return -1;
 	}
 
 	g_mutex_unlock(&priv->dev_lock);
