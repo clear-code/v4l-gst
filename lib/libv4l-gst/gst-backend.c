@@ -139,6 +139,8 @@ struct v4l_gst {
 
 	GstBuffer *eos_gstbuf;
 	EOSState eos_state;
+	GstClockTime last_cap_pts;
+	GstClockTime estimated_cap_duration;
 
 	struct {
 		gint cap_min_buffers;
@@ -162,6 +164,13 @@ struct v4l_gst {
 };
 
 G_DEFINE_QUARK(cap_buf_crc, cap_buf_crc)
+
+static void
+reset_cap_timestamp_state(struct v4l_gst *priv)
+{
+	priv->last_cap_pts = GST_CLOCK_TIME_NONE;
+	priv->estimated_cap_duration = GST_CLOCK_TIME_NONE;
+}
 
 static gboolean
 parse_config_file(struct v4l_gst *priv)
@@ -1258,6 +1267,7 @@ gst_backend_init(int fd)
 		GST_ERROR("Couldn't allocate memory for gst-backend");
 		return NULL;
 	}
+	reset_cap_timestamp_state(priv);
 
 	/* Reject character device */
 	fstat(fd, &buf);
@@ -2427,12 +2437,59 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 				NULL, NULL, v4l2buf);
 }
 
+static gboolean
+get_valid_cap_pts(struct v4l_gst *priv, GstBuffer *gstbuf,
+		  GstClockTime *pts)
+{
+	GstClockTime buffer_pts = GST_BUFFER_PTS(gstbuf);
+	GstClockTime buffer_duration = GST_BUFFER_DURATION(gstbuf);
+
+	if (GST_CLOCK_TIME_IS_VALID(buffer_pts)) {
+		if (GST_CLOCK_TIME_IS_VALID(priv->last_cap_pts) &&
+		    buffer_pts > priv->last_cap_pts) {
+			priv->estimated_cap_duration =
+				buffer_pts - priv->last_cap_pts;
+		} else if (!GST_CLOCK_TIME_IS_VALID(priv->estimated_cap_duration) &&
+			   GST_CLOCK_TIME_IS_VALID(buffer_duration) &&
+			   buffer_duration > 0) {
+			priv->estimated_cap_duration = buffer_duration;
+		}
+
+		priv->last_cap_pts = buffer_pts;
+		*pts = buffer_pts;
+		return TRUE;
+	}
+
+	if (GST_CLOCK_TIME_IS_VALID(priv->last_cap_pts) &&
+	    GST_CLOCK_TIME_IS_VALID(priv->estimated_cap_duration) &&
+	    G_MAXUINT64 - priv->last_cap_pts >= priv->estimated_cap_duration) {
+		/* Some decoders may output the last CAPTURE buffer without a
+		   valid PTS. Do not expose GST_CLOCK_TIME_NONE as a V4L2
+		   timestamp because clients can interpret it as a huge future
+		   timestamp and wait indefinitely for playback end. */
+		*pts = priv->last_cap_pts + priv->estimated_cap_duration;
+		GST_WARNING("CAPTURE buffer has invalid PTS; using estimated PTS "
+			    "(last=%" G_GUINT64_FORMAT ", duration=%"
+			    G_GUINT64_FORMAT ", estimated=%" G_GUINT64_FORMAT ")",
+			    (guint64) priv->last_cap_pts,
+			    (guint64) priv->estimated_cap_duration,
+			    (guint64) *pts);
+		priv->last_cap_pts = *pts;
+		return TRUE;
+	}
+
+	GST_WARNING("CAPTURE buffer has invalid PTS and no estimate is available");
+	return FALSE;
+}
+
 static int
 dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	GstBuffer *gstbuf;
 	guint index;
 	struct timeval timestamp;
+	struct timeval *timestamp_ptr = NULL;
+	GstClockTime pts = GST_CLOCK_TIME_NONE;
 	guint bytesused[GST_VIDEO_MAX_PLANES];
 	gint i;
 
@@ -2471,15 +2528,18 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	}
 	priv->cap_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
+	if (get_valid_cap_pts(priv, gstbuf, &pts)) {
+		GST_TIME_TO_TIMEVAL(pts, timestamp);
+		timestamp_ptr = &timestamp;
+	}
 	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
-		      "DQBUF CAP: gstbuf=%p, index=%d, pts=%lu",
-		      gstbuf, index, GST_BUFFER_PTS(gstbuf) / 1000000);
-
-	GST_TIME_TO_TIMEVAL(GST_BUFFER_PTS(gstbuf), timestamp);
+		      "DQBUF CAP: gstbuf=%p, index=%d, pts=%lu, raw_pts=%lu",
+		      gstbuf, index, pts / 1000000,
+		      GST_BUFFER_PTS(gstbuf) / 1000000);
 
 	return fill_v4l2_buffer(priv, priv->sink_pool,
 				priv->cap_buffers, priv->cap_buffers_num,
-				bytesused, &timestamp, v4l2buf);
+				bytesused, timestamp_ptr, v4l2buf);
 }
 
 int
@@ -3184,6 +3244,7 @@ stop_pipeline(struct v4l_gst *priv)
 
 	g_queue_clear(priv->req_gstbufs_queue);
 	g_queue_clear(priv->cap_gstbufs_queue);
+	reset_cap_timestamp_state(priv);
 
 	set_pipeline_started(priv, FALSE);
 
@@ -3364,6 +3425,7 @@ streamon_ioctl_out(struct v4l_gst *priv)
 	}
 
 	priv->eos_state = EOS_NONE;
+	reset_cap_timestamp_state(priv);
 
 	set_pipeline_started(priv, TRUE);
 
