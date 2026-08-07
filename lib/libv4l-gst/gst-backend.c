@@ -1075,6 +1075,17 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	gstbuf = pull_buffer_from_sample(appsink);
 
+	if (priv->cap_buffers && !gst_buffer_n_memory(gstbuf)) {
+		/* Empty samples cannot be associated with a V4L2 CAPTURE
+		   buffer or dmabuf fd, so do not expose them to clients. */
+		GST_WARNING("Drop empty CAPTURE sample: gstbuf=%p, pts=%"
+			    G_GUINT64_FORMAT ", duration=%" G_GUINT64_FORMAT,
+			    gstbuf, (guint64) GST_BUFFER_PTS(gstbuf),
+			    (guint64) GST_BUFFER_DURATION(gstbuf));
+		gst_buffer_unref(gstbuf);
+		return GST_FLOW_OK;
+	}
+
 	if (priv->config.frame_check && gst_buffer_n_memory(gstbuf)) {
 		guint32 crc;
 
