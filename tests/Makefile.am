@@ -9,10 +9,12 @@ AM_CFLAGS = -Wall -Wpointer-arith
 if HAVE_CUTTER
 AM_CPPFLAGS += $(CUTTER_CFLAGS)
 
-TESTS = test-utils.la
-LOG_COMPILER = $(CUTTER)
+TESTS = run-test-suite.sh
+LOG_COMPILER = $(SHELL)
+TESTS_ENVIRONMENT = CUTTER="$(CUTTER)"
 
 check_LTLIBRARIES = test-utils.la
+EXTRA_DIST = run-test-suite.sh
 
 test_utils_la_SOURCES = \
 	test-utils.c \
@@ -22,11 +24,13 @@ test_utils_la_LIBADD = \
 	$(CUTTER_LIBS)
 test_utils_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir) -L$(with_libv4l_dir)/lib
 
-TESTS += test-gst-backend.la
 check_LTLIBRARIES += test-gst-backend.la
 
 test_gst_backend_la_SOURCES = \
 	test-gst-backend.c \
+	$(top_srcdir)/lib/libv4l-gst/libv4l-gst.c \
+	$(top_srcdir)/lib/libv4l-gst/gst-backend.c \
+	$(top_srcdir)/lib/libv4l-gst/evfd-ctrl.c \
 	$(top_srcdir)/lib/libv4l-gst/utils.c
 test_gst_backend_la_LIBADD = \
 	$(GST_LIBS) \

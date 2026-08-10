@@ -54,7 +54,7 @@ v4l_gst_ioctl(unsigned long int cmd, void *arg)
 }
 
 void
-setup(void)
+cut_startup(void)
 {
 	/* Use identity only to satisfy pipeline configuration parsing.
 	   Format-specific state that would normally come from real decoder
@@ -66,15 +66,23 @@ setup(void)
 	GError *error = NULL;
 
 	config_dir = g_dir_make_tmp("v4l-gst-test-XXXXXX", &error);
-	cut_assert_null(error);
+	if (error)
+		g_error("failed to create config directory: %s",
+			error->message);
 
 	config_path = g_build_filename(config_dir, "libv4l-gst.conf", NULL);
-	cut_assert_true(g_file_set_contents(config_path, config, -1, &error));
-	cut_assert_null(error);
+	if (!g_file_set_contents(config_path, config, -1, &error))
+		g_error("failed to write config file: %s", error->message);
 
 	had_xdg_config_dirs = g_getenv("XDG_CONFIG_DIRS") != NULL;
 	old_xdg_config_dirs = g_strdup(g_getenv("XDG_CONFIG_DIRS"));
 	g_setenv("XDG_CONFIG_DIRS", config_dir, TRUE);
+}
+
+void
+setup(void)
+{
+	GError *error = NULL;
 
 	backend_fd = g_file_open_tmp("v4l-gst-fd-XXXXXX", &backend_fd_path,
 				     &error);
@@ -98,6 +106,11 @@ teardown(void)
 		g_unlink(backend_fd_path);
 	g_free(backend_fd_path);
 	backend_fd_path = NULL;
+}
+
+void
+cut_shutdown(void)
+{
 	if (had_xdg_config_dirs)
 		g_setenv("XDG_CONFIG_DIRS", old_xdg_config_dirs, TRUE);
 	else
@@ -120,7 +133,7 @@ test_create_pipeline_returns_nonnull(void)
 	GstElement *p;
 
 	gst_init(NULL, NULL);
-	p = test_create_pipeline("fakesrc");
+	p = test_create_pipeline("identity");
 	cut_assert_not_null(p);
 	gst_element_set_state(p, GST_STATE_NULL);
 	gst_object_unref(p);

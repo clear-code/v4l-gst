@@ -34,7 +34,7 @@ jobs:
 
     - name: Run tests
       run: |
-        make check
+        ./run-test.sh
 
     - name: Verify release build
       run: |
