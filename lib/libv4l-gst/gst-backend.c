@@ -1817,7 +1817,7 @@ get_ext_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_ctrls)
 {
 	unsigned int i;
 
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_EXT_CTRLS")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category, "unsupported VIDIOC_G_EXT_CTRLS");
@@ -3796,7 +3796,7 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 int
 g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 {
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_SELECTION")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
@@ -3821,7 +3821,7 @@ queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 {
 	gchar fourcc_str[5];
 
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_QUERYCTRL")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
@@ -3885,7 +3885,7 @@ int
 querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 {
 
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_QUERYMENU")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,
@@ -4056,7 +4056,7 @@ int
 g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
 {
 	const gchar *buf_type;
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_G_CROP")) {
 		GST_CAT_ERROR(v4l_gst_ioctl_debug_category,

@@ -3,7 +3,7 @@
 
 #include "config.h"
 
-#ifdef UNIT_TESTS
+#if UNIT_TESTS
 #include <gst/gst.h>
 #include <linux/videodev2.h>
 

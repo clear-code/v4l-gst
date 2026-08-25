@@ -15,12 +15,37 @@ Dependencies
 * [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (e.g. Porter)
   * It's optional and not tested with recent v4l-gst
 
-Compile
-=======
+Compile (Meson)
+===============
 
+```console
+$ meson setup builddir
+$ ninja -C builddir
+$ sudo ninja -C builddir install
 ```
+
+### Meson options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `vidioc_debug` | boolean | false | Enable VIDIOC debug output |
+| `unit_tests` | boolean | true | Build unit tests (requires cutter) |
+| `libv4l_dir` | string | '' | Custom libv4l installation prefix |
+| `libv4l2subdir` | string | 'libv4l' | Subdirectory under libdir for plugins |
+
+Example with custom options:
+```console
+$ meson setup builddir -Dvidioc_debug=true -Dunit_tests=false
+```
+
+Compile (Autotools — legacy)
+=============================
+
+```console
 $ autoreconf -vif
 $ ./configure
+$ make
+$ sudo make install
 ```
 
 Configuration
@@ -95,18 +120,33 @@ using in-tree v4l-utils.
 In addition to developer tools for standard build, need following tools:
 
 * [`cutter`](https://github.com/clear-code/cutter)
-* meson (to build in-tree v4l-utils)
+* meson (to build in-tree v4l-utils and this project)
 
 See [the CI workflow](./.github/workflows/tests.yml) for more detail.
 
-## Build
+## Build with Meson
 
 ```console
 $ ./scripts/build.sh
 ```
 
+Or manually:
+```console
+# Ensure v4l-utils submodule is built (see scripts/build.sh)
+$ export PKG_CONFIG_PATH="v4l-utils/_install_root/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+$ meson setup builddir \
+    -Dlibv4l_dir=v4l-utils/_install_root/usr \
+    -Dunit_tests=true
+$ ninja -C builddir
+```
+
 ## Run tests
 
 ```console
-$ make check
+$ meson test -C builddir
+```
+
+Or using the legacy autotools method:
+```console
+$ ./run-test.sh
 ```

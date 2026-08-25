@@ -33,7 +33,7 @@
 
 static void *plugin_init(int fd)
 {
-#ifdef ENABLE_VIDIOC_DEBUG
+#if ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 
 	if (vidioc_features) {
@@ -144,6 +144,7 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 	return ret;
 }
 
+#if HAVE_LIBV4L_MMAP
 static void *
 plugin_mmap(void *dev_ops_priv, void *start, size_t length, int prot,
 	    int flags, int fd, int64_t offset)
@@ -152,10 +153,13 @@ plugin_mmap(void *dev_ops_priv, void *start, size_t length, int prot,
 	return gst_backend_mmap(priv, start, length, prot, flags, fd,
 				offset);
 }
+#endif
 
 PLUGIN_PUBLIC const struct libv4l_dev_ops libv4l2_plugin = {
 	.init = &plugin_init,
 	.close = &plugin_close,
 	.ioctl = &plugin_ioctl,
+#if HAVE_LIBV4L_MMAP
 	.mmap = &plugin_mmap,
+#endif
 };

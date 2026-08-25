@@ -1,4 +1,4 @@
-# Autotools and build artifacts
+# ── Autotools build artifacts ───────────────────────────────────
 autom4te.cache/
 build-aux/
 config.log
@@ -21,25 +21,6 @@ Makefile.in
 *.d
 *.dep
 *.dirstamp
-
-# VPATH / build directories
-builddir/
-
-# Test output
-*.log
-
-# Editor backups
-*~
-*.swp
-*.swo
-
-# Coverage
-*.gcda
-*.gcno
-
-# Ignore local installs
-_install/
-_install_root/
 
 # Autotools generated files and helpers
 aclocal.m4
@@ -73,3 +54,29 @@ ltmain.sh
 /stamp-h1
 /tests/Makefile
 /tests/*.trs
+
+# ── Meson build artifacts ───────────────────────────────────────
+builddir/
+*.ninja_log
+*.ninja_deps
+meson-info/
+meson-logs/
+build.meson.pyi
+
+# ── VPATH / build directories (legacy) ──────────────────────────
+
+# Test output
+*.log
+
+# Editor backups
+*~
+*.swp
+*.swo
+
+# Coverage
+*.gcda
+*.gcno
+
+# Ignore local installs
+_install/
+_install_root/

@@ -1,0 +1,19 @@
+option('vidioc_debug',
+       type: 'boolean',
+       value: false,
+       description: 'Enable VIDIOC debug output')
+
+option('unit_tests',
+       type: 'boolean',
+       value: true,
+       description: 'Build unit tests (requires cutter)')
+
+option('libv4l_dir',
+       type: 'string',
+       value: '',
+       description: 'Custom libv4l installation prefix')
+
+option('libv4l2subdir',
+       type: 'string',
+       value: 'libv4l',
+       description: 'Subdirectory under libdir for libv4l plugins')
