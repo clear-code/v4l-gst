@@ -15,8 +15,8 @@ Dependencies
 * [v4l-gst-bufferpool-rcar](https://github.com/igel-oss/v4l-gst-bufferpool-rcar) for use with Renesas R-Car boards (e.g. Porter)
   * It's optional and not tested with recent v4l-gst
 
-Compile (Meson)
-===============
+Compile
+=======
 
 ```console
 $ meson setup builddir
@@ -36,16 +36,6 @@ $ sudo ninja -C builddir install
 Example with custom options:
 ```console
 $ meson setup builddir -Dvidioc_debug=true -Dunit_tests=false
-```
-
-Compile (Autotools — legacy)
-=============================
-
-```console
-$ autoreconf -vif
-$ ./configure
-$ make
-$ sudo make install
 ```
 
 Configuration
@@ -124,7 +114,7 @@ In addition to developer tools for standard build, need following tools:
 
 See [the CI workflow](./.github/workflows/tests.yml) for more detail.
 
-## Build with Meson
+## Build
 
 ```console
 $ ./scripts/build.sh
@@ -146,7 +136,7 @@ $ ninja -C builddir
 $ meson test -C builddir
 ```
 
-Or using the legacy autotools method:
+Or use the helper script:
 ```console
 $ ./run-test.sh
 ```
