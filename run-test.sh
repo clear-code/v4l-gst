@@ -14,5 +14,5 @@ fi
 
 ninja -C "$top_dir/builddir"
 
-cd "$top_dir/tests"
+cd "$top_dir/builddir/tests"
 exec "$cutter" --notify=no "$@" .

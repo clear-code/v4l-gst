@@ -11,7 +11,7 @@ option('unit_tests',
 option('libv4l_dir',
        type: 'string',
        value: '',
-       description: 'Custom libv4l installation prefix')
+       description: 'Custom v4l-utils directory (auto-detected from submodule if empty)')
 
 option('libv4l2subdir',
        type: 'string',
