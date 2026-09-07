@@ -107,7 +107,7 @@ else
     fi
 fi
 
-if ninja -C builddir -n >/dev/null 2>&1; then
+if ninja -C builddir -n 2>&1 | grep -q "no work to do"; then
     echo "build up-to-date; skipping ninja"
 else
     ninja -C builddir -j"$(nproc)"

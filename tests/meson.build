@@ -9,7 +9,7 @@ if cutter_dep.found()
 
   test_inc = include_directories(
     '..',
-    '../libv4l-gst',
+    '../lib/libv4l-gst',
   )
 
   # ── test-utils shared module ────────────────────────────────────
