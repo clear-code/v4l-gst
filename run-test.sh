@@ -12,7 +12,7 @@ else
 	cutter=cutter
 fi
 
-make -C "$top_dir/tests" test-utils.la test-gst-backend.la
+ninja -C "$top_dir/builddir"
 
 cd "$top_dir/tests"
 exec "$cutter" --notify=no "$@" .
