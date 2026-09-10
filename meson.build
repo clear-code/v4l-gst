@@ -206,8 +206,11 @@ config_h_data.set10('UNIT_TESTS', get_option('unit_tests'))
 config_h_data.set10('HAVE_VISIBILITY', have_visibility)
 
 # Check if libv4l_dev_ops has mmap member (added in newer v4l-utils)
-have_libv4l_mmap = cc.compiles(
-  '#include <libv4l-plugin.h>\nstruct libv4l_dev_ops ops; void *p = NULL; ops.mmap = p;',
+have_libv4l_mmap = cc.has_member(
+  'struct libv4l_dev_ops',
+  'mmap',
+  dependencies: libv4l_dep,
+  prefix: '#include <libv4l-plugin.h>',
 )
 config_h_data.set10('HAVE_LIBV4L_MMAP', have_libv4l_mmap)
 
