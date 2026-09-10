@@ -28,5 +28,4 @@ libv4l_gst = shared_module(
 # ── Install public headers ──────────────────────────────────────
 install_headers(
   'include/libv4l-gst-bufferpool.h',
-  subdir: 'libv4l-gst',
 )
