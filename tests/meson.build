@@ -62,8 +62,8 @@ if cutter_dep.found()
   )
 
   # ── Register tests with meson test runner ───────────────────────
-  # cutter loads the .so files directly; we use a wrapper script to invoke
-  # cutter with the built modules.
+  # cutter discovers test modules by scanning a directory. Pass the
+  # build directory (where .so files are placed), not individual .so paths.
   cutter_prog = find_program('cutter')
 
   test(
@@ -71,8 +71,7 @@ if cutter_dep.found()
     cutter_prog,
     args: [
       '--notify=no',
-      test_utils.full_path(),
-      test_gst_backend.full_path(),
+      meson.build_root() / 'tests',
     ],
     depends: [test_utils, test_gst_backend],
   )
