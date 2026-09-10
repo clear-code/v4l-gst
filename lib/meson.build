@@ -23,6 +23,7 @@ libv4l_gst = shared_module(
   c_args: common_cargs + ['-DGST_USE_UNSTABLE_API'],
   install_dir: plugin_install_dir,
   install: true,
+  name_prefix: '',
 )
 
 # ── Install public headers ──────────────────────────────────────
