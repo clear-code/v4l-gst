@@ -206,7 +206,7 @@ have_visibility = cc.has_argument('-fvisibility=hidden')
 
 # ── Configuration header ────────────────────────────────────────
 config_h_data = configuration_data()
-config_h_data.set10('ENABLE_DEBUG', true)
+config_h_data.set10('ENABLE_DEBUG', get_option('vidioc_debug'))
 config_h_data.set10('ENABLE_VIDIOC_DEBUG', get_option('vidioc_debug'))
 config_h_data.set10('UNIT_TESTS', get_option('unit_tests'))
 config_h_data.set10('HAVE_VISIBILITY', have_visibility)

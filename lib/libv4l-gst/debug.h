@@ -21,7 +21,9 @@
 
 #include <stdio.h>
 
-#ifdef ENABLE_DEBUG
+#include "config.h"
+
+#if ENABLE_DEBUG
 #define DBG_LOG(fmt, ...) \
 	fprintf(stderr, "[%s:%d] " fmt, __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #else
