@@ -52,13 +52,19 @@ if libv4l_dir != ''
   # Installed to _install_root with arch-specific lib directory (e.g. x86_64-linux-gnu)
   install_arch_lib = libv4l_dir / '_install_root' / 'usr' / 'lib'
   if fs.exists(install_arch_lib) and v4l_pkg_paths.length() == 0
-    foreach d : fs.glob(install_arch_lib, follow_symlinks: false)
-      pkg_dir = d / 'pkgconfig'
-      if fs.exists(pkg_dir)
-        v4l_pkg_paths += [pkg_dir]
-        break
-      endif
-    endforeach
+    # Use find to list arch-specific subdirs (compatible with Meson < 1.4)
+    _ls = run_command('sh', '-c', 'find "$0" -mindepth 1 -maxdepth 1 -type d -printf "%f\n"', install_arch_lib, check: false)
+    if _ls.returncode() == 0
+      foreach d_name : _ls.stdout().split('\n')
+        if d_name != ''
+          pkg_dir = install_arch_lib / d_name / 'pkgconfig'
+          if fs.exists(pkg_dir)
+            v4l_pkg_paths += [pkg_dir]
+            break
+          endif
+        endif
+      endforeach
+    endif
   endif
 
   # Installed to _install_root without arch-specific lib directory
