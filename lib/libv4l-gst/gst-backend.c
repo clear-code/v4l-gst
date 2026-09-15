@@ -558,6 +558,22 @@ fill_config_video_format_out(struct v4l_gst *priv)
 	return priv->supported_out_fmts->len > 0;
 }
 
+static void
+fill_config_video_format_cap(struct v4l_gst *priv)
+{
+	struct fmt color_fmt;
+
+	if (priv->config.preferred_format) {
+		color_fmt.fourcc = priv->config.preferred_format;
+		fourcc_to_string(priv->config.preferred_format, color_fmt.desc);
+	} else {
+		color_fmt.fourcc = fourcc_from_string("NV12");
+		g_strlcpy(color_fmt.desc, "NV12", FMTDESC_NAME_LENGTH);
+	}
+	g_array_prepend_vals(priv->supported_cap_fmts,
+			     &color_fmt, 1);
+}
+
 static gboolean
 get_supported_video_format_out(struct v4l_gst *priv)
 {
@@ -1313,6 +1329,7 @@ gst_backend_init(int fd)
 		GST_ERROR("Failed to fill in supported video format");
 		goto error;
 	}
+	fill_config_video_format_cap(priv);
 
 	g_mutex_init(&priv->v4l2events.mutex);
 	priv->v4l2events.subscribed = 0;
