@@ -98,7 +98,7 @@ fourcc_to_mimetype(guint32 fourcc)
 }
 
 guint32
-fourcc_from_string(gchar *str)
+fourcc_from_string(const gchar *str)
 {
 	if (!str || !*str || strlen(str) != 4)
 		return 0;
