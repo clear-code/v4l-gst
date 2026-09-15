@@ -318,6 +318,32 @@ test_enum_fmt_rejects_output_index_after_configured_codec(void)
 }
 
 void
+test_enum_fmt_capture_initial_is_nv12(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected = {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.flags = 0,
+	};
+	struct enum_fmt_result actual;
+	const gchar *expected_string =
+		cut_take_string(enum_fmt_result_to_string(&expected));
+	const gchar *actual_string;
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	desc.index = 1;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
 test_enum_fmt_rejects_capture_index_after_fixture_format(void)
 {
 	struct v4l2_fmtdesc desc = { 0, };
@@ -332,7 +358,7 @@ test_enum_fmt_rejects_capture_index_after_fixture_format(void)
 	const gchar *actual_string;
 
 	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	desc.index = 1;
+	desc.index = 2;
 
 	errno = 0;
 	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
