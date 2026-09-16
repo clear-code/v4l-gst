@@ -1,6 +1,0 @@
-AUTOMAKE_OPTIONS = foreign
-ACLOCAL_AMFLAGS = -I m4
-
-SUBDIRS = lib tests
-
-EXTRA_DIST = COPYING.libv4l run-test.sh

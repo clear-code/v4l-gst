@@ -92,28 +92,23 @@ else
     fi
 fi
 
-# Configure & build the project only when needed
-if [ -f config.status ] && [ -f Makefile ]; then
-    echo "config.status and Makefile exist; skipping autoreconf/configure"
+# Configure & build the project with Meson
+BUILDDIR="$ROOT/builddir"
+MESON_ARGS=(-Dlibv4l-dir="$V4L_DIR")
+if [ "$BUILD_MODE" = "release" ]; then
+    echo "Configuring release build (unit tests disabled)"
+    MESON_ARGS+=(-Dtests=false)
 else
-    autoreconf -fi
-    # Ensure the configure script can find headers/libs installed into the
-    # v4l-utils local install tree.
-    export PKG_CONFIG_PATH="$V4L_DIR/lib/pkgconfig:${PKG_CONFIG_PATH-}"
-    export CPPFLAGS="-I$V4L_DIR/include ${CPPFLAGS-}"
-    export LDFLAGS="-L$V4L_DIR/lib ${LDFLAGS-}"
-    if [ "$BUILD_MODE" = "release" ]; then
-        echo "Configuring release build (unit tests disabled)"
-        ./configure --with-libv4l-dir="$V4L_DIR"
-    else
-        ./configure --enable-unit-tests --with-libv4l-dir="$V4L_DIR"
-    fi
+    MESON_ARGS+=(-Dtests=true)
 fi
 
-if make -q >/dev/null 2>&1; then
-    echo "build up-to-date; skipping make"
+if [ -d "$BUILDDIR" ] && [ -f "$BUILDDIR/meson-info/intro-buildoptions.json" ]; then
+    echo "builddir exists; reconfiguring..."
+    meson setup --reconfigure "$BUILDDIR" "${MESON_ARGS[@]}"
 else
-    make -j"$(nproc)"
+    meson setup "$BUILDDIR" "${MESON_ARGS[@]}"
 fi
+
+meson compile -C "$BUILDDIR"
 
 echo "Build finished (BUILD_MODE=$BUILD_MODE)"

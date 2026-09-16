@@ -1,0 +1,27 @@
+option(
+  'tests',
+  type: 'boolean',
+  value: false,
+  description: 'Build unit tests (requires cutter)',
+)
+
+option(
+  'vidioc-debug',
+  type: 'boolean',
+  value: false,
+  description: 'Enable VIDIOC debug output',
+)
+
+option(
+  'libv4l-dir',
+  type: 'string',
+  value: '',
+  description: 'Path to local libv4l installation (v4l-utils _install_root/usr)',
+)
+
+option(
+  'libv4l2-plugin-dir',
+  type: 'string',
+  value: '',
+  description: 'Install directory for libv4l2 plugins (default: lib/libv4l/plugins)',
+)
