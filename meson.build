@@ -32,18 +32,18 @@ gst_deps = [
 
 # libv4l2: try a user-supplied directory first (PC builds with the v4l-utils
 # submodule), fall back to pkg-config (Yocto / system install).
+# Only the headers are needed: this plugin is loaded by libv4l2 via dlopen and
+# calls none of libv4l2's symbols, so it must not link against -lv4l2.
+# (Autotools build matched this: LIBADD was $(GST_LIBS) only.)
 _libv4l_dir = get_option('libv4l-dir')
-libv4l2_lib_dir = ''
 if _libv4l_dir != ''
-  # Use raw compile/link args to avoid Meson's source-tree path check
+  # Use raw compile args to avoid Meson's source-tree path check
   # (v4l-utils _install_root is inside the source tree as a submodule)
   libv4l2_dep = declare_dependency(
     compile_args: ['-I' + _libv4l_dir / 'include'],
-    link_args: ['-L' + _libv4l_dir / 'lib', '-lv4l2'],
   )
-  libv4l2_lib_dir = _libv4l_dir / 'lib'
 else
-  libv4l2_dep = dependency('libv4l2', required: true)
+  libv4l2_dep = dependency('libv4l2', required: true).partial_dependency(compile_args: true)
 endif
 
 # Cutter (optional, for unit tests)
