@@ -10,9 +10,20 @@ if [ ! -d builddir ]; then
     exit 1
 fi
 
-if ! meson test -C builddir --list 2>/dev/null | grep -q unit-tests; then
-    echo "Unit tests are not configured in builddir (needs -Dtests=true)." >&2
+if [ ! -f builddir/tests/test-utils.so ] || [ ! -f builddir/tests/test-gst-backend.so ]; then
+    echo "Unit tests are not built in builddir (needs -Dtests=true)." >&2
     exit 1
 fi
 
-exec meson test -C builddir --verbose "$@"
+meson compile -C builddir test-utils test-gst-backend
+
+if [ "${CUTTER:-}" ]; then
+    cutter=$CUTTER
+elif [ -x "$top_dir/_local/bin/cutter" ]; then
+    cutter=$top_dir/_local/bin/cutter
+else
+    cutter=cutter
+fi
+
+cd builddir/tests
+exec "$cutter" --notify=no "$@" .
