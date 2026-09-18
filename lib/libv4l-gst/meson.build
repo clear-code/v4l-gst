@@ -18,7 +18,7 @@ else
 endif
 
 libv4l_gst = shared_library(
-  'v4l-gst',
+  'libv4l-gst',
   src_lib,
   include_directories: [inc_top, inc_lib],
   dependencies: gst_deps + [libv4l2_dep],
