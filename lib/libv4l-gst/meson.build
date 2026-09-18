@@ -31,5 +31,5 @@ libv4l_gst = shared_library(
 # Install public header
 install_headers(
   '../include/libv4l-gst-bufferpool.h',
-  install_dir: get_option('includedir') / 'libv4l-gst',
+  install_dir: get_option('includedir'),
 )
