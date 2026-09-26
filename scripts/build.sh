@@ -1,9 +1,9 @@
 #!/bin/bash
 set -eu
-# Bootstrap and run tests for this repository. This script will:
+# Bootstrap and build this repository with Meson. This script will:
 # - ensure v4l-utils submodule is built into _install_root/usr (if needed)
 # - ensure cutter is available (system or build submodule into _local)
-# - configure (if needed), build (if needed)
+# - configure (if needed) and build with Meson/Ninja
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -92,28 +92,26 @@ else
     fi
 fi
 
-# Configure & build the project only when needed
-if [ -f config.status ] && [ -f Makefile ]; then
-    echo "config.status and Makefile exist; skipping autoreconf/configure"
+# Configure & build with Meson
+BUILD_DIR="$ROOT/builddir"
+
+MESON_OPTIONS=(-Dlibv4l-dir="$V4L_DIR")
+if [ "$BUILD_MODE" = "release" ]; then
+    echo "Configuring release build (unit tests disabled)"
+    MESON_OPTIONS+=(-Dunit-tests=disabled)
 else
-    autoreconf -fi
-    # Ensure the configure script can find headers/libs installed into the
-    # v4l-utils local install tree.
-    export PKG_CONFIG_PATH="$V4L_DIR/lib/pkgconfig:${PKG_CONFIG_PATH-}"
-    export CPPFLAGS="-I$V4L_DIR/include ${CPPFLAGS-}"
-    export LDFLAGS="-L$V4L_DIR/lib ${LDFLAGS-}"
-    if [ "$BUILD_MODE" = "release" ]; then
-        echo "Configuring release build (unit tests disabled)"
-        ./configure --with-libv4l-dir="$V4L_DIR"
-    else
-        ./configure --enable-unit-tests --with-libv4l-dir="$V4L_DIR"
-    fi
+    echo "Configuring test build (unit tests enabled)"
+    MESON_OPTIONS+=(-Dunit-tests=enabled)
 fi
 
-if make -q >/dev/null 2>&1; then
-    echo "build up-to-date; skipping make"
+if [ -d "$BUILD_DIR" ] && meson setup --reconfigure "$BUILD_DIR" "${MESON_OPTIONS[@]}" >/dev/null 2>&1; then
+    echo "Reconfigured existing Meson build directory ($BUILD_DIR)"
 else
-    make -j"$(nproc)"
+    echo "Setting up fresh Meson build directory ($BUILD_DIR)"
+    rm -rf "$BUILD_DIR"
+    meson setup "$BUILD_DIR" "${MESON_OPTIONS[@]}"
 fi
+
+meson compile -C "$BUILD_DIR" -j"$(nproc)"
 
 echo "Build finished (BUILD_MODE=$BUILD_MODE)"

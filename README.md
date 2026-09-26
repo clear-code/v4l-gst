@@ -18,10 +18,28 @@ Dependencies
 Compile
 =======
 
+This project is built with [Meson](https://mesonbuild.com). On a
+development PC, use the provided script. It builds the in-tree `v4l-utils`
+submodule (and Cutter when needed), then configures and builds the project:
+
 ```
-$ autoreconf -vif
-$ ./configure
+$ ./scripts/build.sh
 ```
+
+To configure, build and install manually:
+
+```
+$ meson setup builddir
+$ meson compile -C builddir
+$ meson install -C builddir
+```
+
+The plugin `libv4l-gst.so` is installed to `${libdir}/libv4l/plugins/`.
+
+Only the `v4l-utils` (libv4l) headers are required at build time; libv4l
+implementation libraries are not linked. On a PC they are resolved from the
+in-tree `v4l-utils` submodule (override with `-Dlibv4l-dir=DIR`); in Yocto
+builds the sysroot provides them.
 
 Configuration
 =============
@@ -95,7 +113,8 @@ using in-tree v4l-utils.
 In addition to developer tools for standard build, need following tools:
 
 * [`cutter`](https://github.com/clear-code/cutter)
-* meson (to build in-tree v4l-utils)
+* meson and ninja (to build in-tree v4l-utils and this project)
+* autoconf, automake, libtool, intltool and gettext (to build in-tree cutter)
 
 See [the CI workflow](./.github/workflows/tests.yml) for more detail.
 
@@ -108,5 +127,11 @@ $ ./scripts/build.sh
 ## Run tests
 
 ```console
-$ make check
+$ ./run-test.sh
+```
+
+The tests can also be run through Meson:
+
+```console
+$ meson test -C builddir
 ```

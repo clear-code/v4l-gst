@@ -1,0 +1,19 @@
+option('libv4l-dir',
+  type: 'string',
+  value: '',
+  description: 'Install root of a local v4l-utils (libv4l) build, e.g. <src>/v4l-utils/_install_root/usr. If empty, the in-tree v4l-utils submodule install tree is auto-detected and the system v4l-utils is used as a fallback (e.g. Yocto sysroot). Only headers are resolved from it; libv4l libraries are not linked.')
+
+option('unit-tests',
+  type: 'feature',
+  value: 'auto',
+  description: 'Build unit tests. Requires the Cutter framework (cutter.pc). Fails if enabled and Cutter is not found.')
+
+option('vidioc-debug',
+  type: 'boolean',
+  value: false,
+  description: 'Enable specific debug features for VIDIOC operations.')
+
+option('libv4l-subdir',
+  type: 'string',
+  value: 'libv4l',
+  description: 'Subdirectory under libdir where the libv4l plugin is installed (the plugin is installed to ${libdir}/<subdir>/plugins).')
