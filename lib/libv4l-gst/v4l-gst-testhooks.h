@@ -1,5 +1,5 @@
-#ifndef __GST_BACKEND_TEST_H__
-#define __GST_BACKEND_TEST_H__
+#ifndef __V4L_GST_TESTHOOKS_H__
+#define __V4L_GST_TESTHOOKS_H__
 
 #include "config.h"
 
@@ -13,4 +13,4 @@ GstElement *test_create_pipeline(const gchar *pipeline_str);
 void prepare_format_backend_fixture(struct v4l_gst *priv);
 #endif
 
-#endif /* __GST_BACKEND_TEST_H__ */
+#endif /* __V4L_GST_TESTHOOKS_H__ */

@@ -22,7 +22,7 @@
 #include <errno.h>
 #include <libv4l-plugin.h>
 
-#include "gst-backend.h"
+#include "v4l-gst.h"
 #include "debug.h"
 
 #if HAVE_VISIBILITY

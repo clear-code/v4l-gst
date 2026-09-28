@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Suite 500, Boston, MA  02110-1335  USA
  */
 
-#ifndef __GST_BACKEND_H__
-#define __GST_BACKEND_H__
+#ifndef __V4L_GST_H__
+#define __V4L_GST_H__
 
 #include <linux/videodev2.h>
 
@@ -53,4 +53,4 @@ int decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd
 
 #define ENV_DISABLE_VIDIOC_FEATURES "DISABLE_VIDIOC_FEATURES"
 
-#endif /* __GST_BACKEND_H__ */
+#endif /* __V4L_GST_H__ */

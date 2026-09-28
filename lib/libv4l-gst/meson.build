@@ -1,8 +1,11 @@
-# gst-backend-testhooks.c is included into gst-backend.c directly,
-# do not compile it separately.
 plugin_sources = [
   'libv4l-gst.c',
-  'gst-backend.c',
+  'v4l-gst-core.c',
+  'v4l-gst-pipeline.c',
+  'v4l-gst-fmt.c',
+  'v4l-gst-buf.c',
+  'v4l-gst-ctrl.c',
+  'v4l-gst-event.c',
   'evfd-ctrl.c',
   'utils.c',
 ]

@@ -1,6 +1,9 @@
-#include "gst-backend-testhooks.h"
+#include "config.h"
 
 #ifdef UNIT_TESTS
+
+#include "v4l-gst-testhooks.h"
+#include "v4l-gst-internal.h"
 
 GstElement *
 test_create_pipeline(const gchar *pipeline_str)
