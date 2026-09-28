@@ -25,18 +25,18 @@ prepare_format_backend_fixture(struct v4l_gst *priv)
 		return;
 	if (!priv->pipeline)
 		priv->pipeline = create_pipeline("identity");
-	append_test_format(priv->supported_cap_fmts, V4L2_PIX_FMT_NV12, "NV12");
+	append_test_format(priv->cap.supported_fmts, V4L2_PIX_FMT_NV12, "NV12");
 
-	priv->out_fmt.pixelformat = V4L2_PIX_FMT_H264;
-	priv->out_fmt.plane_fmt[0].sizeimage = 1024;
-	priv->cap_fmt.pixelformat = V4L2_PIX_FMT_NV12;
-	priv->cap_fmt.width = 640;
-	priv->cap_fmt.height = 480;
-	priv->cap_fmt.num_planes = 1;
-	priv->cap_fmt.plane_fmt[0].bytesperline = 640;
-	priv->cap_fmt.plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
-	g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
-	priv->out_cnt = INPUT_BUFFERING_CNT;
+	priv->out.fmt.pixelformat = V4L2_PIX_FMT_H264;
+	priv->out.fmt.plane_fmt[0].sizeimage = 1024;
+	priv->cap.fmt.pixelformat = V4L2_PIX_FMT_NV12;
+	priv->cap.fmt.width = 640;
+	priv->cap.fmt.height = 480;
+	priv->cap.fmt.num_planes = 1;
+	priv->cap.fmt.plane_fmt[0].bytesperline = 640;
+	priv->cap.fmt.plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+	priv->out.cnt = INPUT_BUFFERING_CNT;
 }
 
 #endif

@@ -49,119 +49,7 @@ GST_DEBUG_CATEGORY_STATIC(v4l_gst_debug_category);
 GST_DEBUG_CATEGORY_STATIC(v4l_gst_ioctl_debug_category);
 GST_DEBUG_CATEGORY_STATIC(v4l_gst_buffer_debug_category);
 
-#define DEF_CAP_MIN_BUFFERS		2
-#define INPUT_BUFFERING_CNT		16 // must be <= VIDEO_MAX_FRAME
-#define INITIAL_BUFFER_WAIT_TIMEOUT	(10 * G_TIME_SPAN_SECOND)
-
-#define FMTDESC_NAME_LENGTH		32  // The same size as defined in the V4L2 spec
-
-enum buffer_state {
-	V4L_GST_BUFFER_QUEUED,
-	V4L_GST_BUFFER_DEQUEUED,
-};
-
-struct v4l_gst_buffer {
-	GstBuffer *gstbuf;
-	GstMapInfo info;
-	GstMapFlags flags;
-	struct v4l2_plane planes[GST_VIDEO_MAX_PLANES];
-	struct v4l_gst *priv;
-	enum buffer_state state;
-	int plane0_fd; /* See reindex_buffers() */
-};
-
-struct fmt {
-	guint fourcc;
-	gchar desc[FMTDESC_NAME_LENGTH];
-};
-
-typedef enum {
-	EOS_NONE,
-	EOS_WAITING_DECODE,
-	EOS_GOT
-} EOSState;
-
-struct v4l_gst {
-	int plugin_fd;
-	gboolean is_non_blocking;
-	struct event_state *event_state;
-
-	GstElement *pipeline;
-	GstElement *appsrc;
-	GstElement *appsink;
-	GstElement *decoder;
-	GstPad *video_sink_pad;
-
-	GstVideoInfo src_video_info;
-
-	GstAppSinkCallbacks appsink_cb;
-	gulong probe_id;
-	gulong decoder_probe_id;
-
-	void *pool_lib_handle;
-	struct libv4l_gst_buffer_pool_ops *pool_ops;
-
-	/*
-	 *  out (OUTPUT) : Application --> v4l-gst  Encoded data like H.264
-	 *  cap (CAPTURE): Application <-- v4l-gst  Decoded data like NV12
-	 */
-	GArray *supported_out_fmts; /* struct fmt */
-	GArray *supported_cap_fmts; /* struct fmt */
-	struct v4l2_pix_format_mplane out_fmt;
-	struct v4l2_pix_format_mplane cap_fmt;
-
-	GstBufferPool *src_pool;  /* for OUTPUT  */
-	GstBufferPool *sink_pool; /* for CAPTURE */
-
-	struct v4l_gst_buffer *out_buffers;
-	gint out_buffers_num;
-	struct v4l_gst_buffer *cap_buffers;
-	gint cap_buffers_num;
-
-	int64_t mmap_offset;
-
-	GQueue *req_gstbufs_queue; /* GstBuffer */
-	GQueue *cap_gstbufs_queue; /* GstBuffer */
-	GMutex queue_mutex;
-	GCond queue_cond;
-
-	gint returned_out_buffers_num;
-
-	/* To wait for the requested number of buffers on CAPTURE
-	   to be set in pad_probe_query() */
-	GMutex cap_reqbuf_mutex;
-	GCond cap_reqbuf_cond;
-	gboolean cancel_cap_reqbuf_wait;
-	int is_cap_fmt_acquirable;
-	gint out_cnt;
-
-	gboolean is_pipeline_started;
-
-	GstBuffer *eos_gstbuf;
-	EOSState eos_state;
-	GstClockTime last_cap_pts;
-	GstClockTime estimated_cap_duration;
-
-	struct {
-		gint cap_min_buffers;
-		gint max_width;
-		gint max_height;
-		guint32 preferred_format;
-		guint32 fixed_pipeline;
-		GHashTable *pipelines; /* gchar *fourcc, gchar *pipeline */
-		gchar *pool_lib_path;
-		FrameCheckType frame_check;
-	} config;
-
-	struct {
-		GMutex mutex;
-		gint subscribed;
-		guint32 sequence;
-		GQueue *queue;
-	} v4l2events;
-
-	GMutex dev_lock;
-};
+#include "v4l-gst-internal.h"
 
 G_DEFINE_QUARK(cap_buf_crc, cap_buf_crc)
 
@@ -543,19 +431,19 @@ fill_config_video_format_out(struct v4l_gst *priv)
 	gint i;
 	gchar codecs[256] = {0};
 
-	g_array_set_size(priv->supported_out_fmts, 0);
+	g_array_set_size(priv->out.supported_fmts, 0);
 	g_hash_table_foreach(priv->config.pipelines,
 			     fill_out_fmts_func,
-			     priv->supported_out_fmts);
+			     priv->out.supported_fmts);
 
-	for (i = 0; i < priv->supported_out_fmts->len; i++) {
-		struct fmt *fmts = (struct fmt*)priv->supported_out_fmts->data;
+	for (i = 0; i < priv->out.supported_fmts->len; i++) {
+		struct fmt *fmts = (struct fmt*)priv->out.supported_fmts->data;
 		g_strlcat(codecs, fmts[i].desc, sizeof(codecs));
 		g_strlcat(codecs, " ", sizeof(codecs));
 	}
 	GST_DEBUG("supported codecs: %s", codecs);
 
-	return priv->supported_out_fmts->len > 0;
+	return priv->out.supported_fmts->len > 0;
 }
 
 static void
@@ -570,7 +458,7 @@ fill_config_video_format_cap(struct v4l_gst *priv)
 		color_fmt.fourcc = fourcc_from_string("NV12");
 		g_strlcpy(color_fmt.desc, "NV12", FMTDESC_NAME_LENGTH);
 	}
-	g_array_prepend_vals(priv->supported_cap_fmts,
+	g_array_prepend_vals(priv->cap.supported_fmts,
 			     &color_fmt, 1);
 }
 
@@ -599,13 +487,13 @@ get_supported_video_format_out(struct v4l_gst *priv)
 	} else {
 		GST_ERROR("Unsupported codec : %s", mime);
 		gst_caps_unref(caps);
-		g_array_set_size(priv->supported_out_fmts, 0);
+		g_array_set_size(priv->out.supported_fmts, 0);
 		return FALSE;
 	}
 	GST_DEBUG("out supported codec : %s", mime);
 
-	g_array_set_size(priv->supported_out_fmts, 1);
-	fmt = (struct fmt*)priv->supported_out_fmts->data;
+	g_array_set_size(priv->out.supported_fmts, 1);
+	fmt = (struct fmt*)priv->out.supported_fmts->data;
 
 	fmt->fourcc = fourcc;
 	if(fourcc == V4L2_PIX_FMT_H264)
@@ -632,7 +520,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	struct fmt color_fmt;
 	gchar fourcc_str[5];
 
-	g_array_set_size(priv->supported_cap_fmts, 0);
+	g_array_set_size(priv->cap.supported_fmts, 0);
 
 	caps = get_peer_pad_template_caps(priv->appsink, "sink",
 					  &priv->video_sink_pad);
@@ -687,7 +575,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 			g_strlcpy(color_fmt.desc, fmt_str, FMTDESC_NAME_LENGTH);
 
 			if (preferred && color_fmt.fourcc == preferred) {
-				g_array_prepend_vals(priv->supported_cap_fmts,
+				g_array_prepend_vals(priv->cap.supported_fmts,
 						     &color_fmt, 1);
 
 				fourcc_to_string(preferred, fourcc_str);
@@ -695,7 +583,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 					  fourcc_str, preferred);
 				preferred_found = TRUE;
 			} else {
-				g_array_append_vals(priv->supported_cap_fmts,
+				g_array_append_vals(priv->cap.supported_fmts,
 						    &color_fmt, 1);
 			}
 		}
@@ -704,7 +592,7 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	if (preferred) {
 		if (preferred_found) {
 			/* TODO: Add a new option to force use this? */
-			g_array_set_size(priv->supported_cap_fmts, 1);
+			g_array_set_size(priv->cap.supported_fmts, 1);
 		} else {
 			fourcc_to_string(preferred, fourcc_str);
 			GST_INFO("Preferred format %s (0x%x) isn't supported",
@@ -714,13 +602,13 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 
 	gst_caps_unref(caps);
 
-	if (priv->supported_cap_fmts->len == 0) {
+	if (priv->cap.supported_fmts->len == 0) {
 		GST_ERROR("Failed to get video formats from caps");
 		return FALSE;
 	}
 
 	GST_DEBUG("The total number of cap supported video format : %d",
-		  priv->supported_cap_fmts->len);
+		  priv->cap.supported_fmts->len);
 
 
 	return TRUE;
@@ -767,7 +655,7 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 	   e.g.)
 	     16-byte alignment -> 15 (0b1111)
 	     64-byte alignment -> 63 (0b111111) */
-	switch (priv->cap_fmt.pixelformat) {
+	switch (priv->cap.fmt.pixelformat) {
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 	case V4L2_PIX_FMT_YVU420:
@@ -783,7 +671,7 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 	}
 
 	gst_video_alignment_reset(alignment);
-	for (i = 0; i < priv->cap_fmt.num_planes; i++)
+	for (i = 0; i < priv->cap.fmt.num_planes; i++)
 		alignment->stride_align[i] = stride_align;
 }
 
@@ -839,27 +727,27 @@ retrieve_cap_format_info(struct v4l_gst *priv, GstVideoInfo *info)
 {
 	gint fourcc;
 
-	priv->cap_fmt.width = info->width;
-	priv->cap_fmt.height = info->height;
+	priv->cap.fmt.width = info->width;
+	priv->cap.fmt.height = info->height;
 
 	fourcc = fourcc_from_gst_video_format(info->finfo->format);
-	if (priv->cap_fmt.pixelformat != 0 &&
-	    priv->cap_fmt.pixelformat != fourcc) {
+	if (priv->cap.fmt.pixelformat != 0 &&
+	    priv->cap.fmt.pixelformat != fourcc) {
 		GST_WARNING("Unexpected cap video format");
 	}
-	priv->cap_fmt.pixelformat = fourcc;
+	priv->cap.fmt.pixelformat = fourcc;
 
-	priv->cap_fmt.num_planes = info->finfo->n_planes;
+	priv->cap.fmt.num_planes = info->finfo->n_planes;
 }
 
 static void
 set_pipeline_started(struct v4l_gst *priv, gboolean started)
 {
-	g_mutex_lock(&priv->cap_reqbuf_mutex);
-	priv->cancel_cap_reqbuf_wait = !started;
+	g_mutex_lock(&priv->cap.reqbuf_mutex);
+	priv->cap.cancel_reqbuf_wait = !started;
 	if (!started)
-		g_cond_broadcast(&priv->cap_reqbuf_cond);
-	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+		g_cond_broadcast(&priv->cap.reqbuf_cond);
+	g_mutex_unlock(&priv->cap.reqbuf_mutex);
 
 	g_mutex_lock(&priv->queue_mutex);
 	priv->is_pipeline_started = started;
@@ -875,18 +763,18 @@ wait_for_cap_reqbuf_invocation(struct v4l_gst *priv)
 	gboolean timed_out = FALSE;
 	gint64 end_time;
 
-	g_mutex_lock(&priv->cap_reqbuf_mutex);
+	g_mutex_lock(&priv->cap.reqbuf_mutex);
 	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
-	while (!priv->cancel_cap_reqbuf_wait && priv->cap_buffers_num <= 0) {
-		if (!g_cond_wait_until(&priv->cap_reqbuf_cond,
-				       &priv->cap_reqbuf_mutex,
+	while (!priv->cap.cancel_reqbuf_wait && priv->cap.buffers_num <= 0) {
+		if (!g_cond_wait_until(&priv->cap.reqbuf_cond,
+				       &priv->cap.reqbuf_mutex,
 				       end_time)) {
 			timed_out = TRUE;
 			break;
 		}
 	}
-	succeeded = !priv->cancel_cap_reqbuf_wait && priv->cap_buffers_num > 0;
-	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+	succeeded = !priv->cap.cancel_reqbuf_wait && priv->cap.buffers_num > 0;
+	g_mutex_unlock(&priv->cap.reqbuf_mutex);
 
 	if (timed_out && !succeeded)
 		GST_WARNING("Timed out waiting VIDIOC_REQBUFS on CAPTURE.");
@@ -902,7 +790,7 @@ release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *gstbuf)
 
 	set_event(priv->event_state, POLLIN);
 
-	priv->returned_out_buffers_num++;
+	priv->out.returned_cnt++;
 }
 
 static inline void
@@ -954,7 +842,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 
 		retrieve_cap_format_info(priv, &info);
 		get_cap_buffer_alignment(priv, &alignment);
-		g_atomic_int_set(&priv->is_cap_fmt_acquirable, 1);
+		g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
 		push_source_change_event(priv);
 
 		set_event(priv->event_state, POLLOUT);
@@ -973,12 +861,12 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
 		*/
 		if (wait_for_cap_reqbuf_invocation(priv)) {
-			set_buffer_pool_params(priv->sink_pool, caps, info.size,
-					       0, priv->cap_buffers_num,
+			set_buffer_pool_params(priv->cap.pool, caps, info.size,
+					       0, priv->cap.buffers_num,
 					       &alignment);
-			gst_query_add_allocation_pool(query, priv->sink_pool,
+			gst_query_add_allocation_pool(query, priv->cap.pool,
 						      info.size,
-						      0, priv->cap_buffers_num);
+						      0, priv->cap.buffers_num);
 		} else {
 			GST_WARNING("Failed to wait VIDIOC_REQBUF.");
 		}
@@ -1072,10 +960,10 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 		release_out_buffer(priv, priv->eos_gstbuf);
 	g_mutex_lock(&priv->queue_mutex);
 	GST_DEBUG("EOS: Got from AppSink. Cached buffers: %u",
-		  g_queue_get_length(priv->cap_gstbufs_queue));
+		  g_queue_get_length(priv->cap.gstbufs_queue));
 	priv->eos_state = EOS_GOT;
-	if (priv->cap_gstbufs_queue &&
-	    !g_queue_is_empty(priv->cap_gstbufs_queue)) {
+	if (priv->cap.gstbufs_queue &&
+	    !g_queue_is_empty(priv->cap.gstbufs_queue)) {
 		set_event(priv->event_state, POLLOUT);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
@@ -1091,7 +979,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 	gstbuf = pull_buffer_from_sample(appsink);
 
-	if (priv->cap_buffers && !gst_buffer_n_memory(gstbuf)) {
+	if (priv->cap.buffers && !gst_buffer_n_memory(gstbuf)) {
 		/* Empty samples cannot be associated with a V4L2 CAPTURE
 		   buffer or dmabuf fd, so do not expose them to clients. */
 		GST_WARNING("Drop empty CAPTURE sample: gstbuf=%p, pts=%"
@@ -1120,10 +1008,10 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 			      gstbuf, GST_BUFFER_PTS(gstbuf) / 1000000);
 	}
 
-	if (priv->cap_buffers)
-		queue = priv->cap_gstbufs_queue;
+	if (priv->cap.buffers)
+		queue = priv->cap.gstbufs_queue;
 	else
-		queue = priv->req_gstbufs_queue;
+		queue = priv->out.gstbufs_queue;
 
 	g_mutex_lock(&priv->queue_mutex);
 
@@ -1136,7 +1024,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 			GST_DEBUG("EOS: Flush last frame");
 		g_cond_signal(&priv->queue_cond);
 		set_event(priv->event_state, POLLOUT);
-	} else if (!priv->cap_buffers) {
+	} else if (!priv->cap.buffers) {
 		g_cond_signal(&priv->queue_cond);
 	}
 
@@ -1159,8 +1047,8 @@ init_app_elements(struct v4l_gst *priv)
 		return FALSE;
 
 	/* For queuing buffers received from appsink */
-	priv->cap_gstbufs_queue = g_queue_new();
-	priv->req_gstbufs_queue = g_queue_new();
+	priv->cap.gstbufs_queue = g_queue_new();
+	priv->out.gstbufs_queue = g_queue_new();
 
 	/* Set the appsrc queue size to unlimited.
 	   The amount of buffers is managed by the buffer pool. */
@@ -1200,7 +1088,7 @@ init_buffer_pool(struct v4l_gst *priv)
 				    &priv->pool_lib_handle, &priv->pool_ops);
 	}
 
-	create_buffer_pool(priv->pool_ops, &priv->src_pool, &priv->sink_pool);
+	create_buffer_pool(priv->pool_ops, &priv->out.pool, &priv->cap.pool);
 
 	/* To hook allocation queries */
 	priv->probe_id = setup_query_pad_probe(priv);
@@ -1213,10 +1101,10 @@ init_buffer_pool(struct v4l_gst *priv)
 
 	/* error cases */
  free_pool:
-	if (priv->src_pool)
-		gst_object_unref(priv->src_pool);
-	if (priv->sink_pool)
-		gst_object_unref(priv->sink_pool);
+	if (priv->out.pool)
+		gst_object_unref(priv->out.pool);
+	if (priv->cap.pool)
+		gst_object_unref(priv->cap.pool);
 
 	return FALSE;
 }
@@ -1246,18 +1134,18 @@ init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 	if (!init_buffer_pool(priv))
 		goto error;
 
-	priv->out_fmt.pixelformat = fourcc;
+	priv->out.fmt.pixelformat = fourcc;
 
 	return TRUE;
 
  error:
-	if (priv->cap_gstbufs_queue) {
-		g_queue_free(priv->cap_gstbufs_queue);
-		priv->cap_gstbufs_queue = NULL;
+	if (priv->cap.gstbufs_queue) {
+		g_queue_free(priv->cap.gstbufs_queue);
+		priv->cap.gstbufs_queue = NULL;
 	}
-	if (priv->req_gstbufs_queue) {
-		g_queue_free(priv->req_gstbufs_queue);
-		priv->req_gstbufs_queue = NULL;
+	if (priv->out.gstbufs_queue) {
+		g_queue_free(priv->out.gstbufs_queue);
+		priv->out.gstbufs_queue = NULL;
 	}
 	if (priv->pipeline) {
 		gst_object_unref(priv->pipeline);
@@ -1322,8 +1210,18 @@ gst_backend_init(int fd)
 		goto error;
 	}
 
-	priv->supported_out_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
-	priv->supported_cap_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
+	/*
+	 * Only the M2M decoder role is supported at the moment:
+	 * OUTPUT carries a compressed bitstream and CAPTURE
+	 * carries decoded raw frames.
+	 */
+	priv->out.buf_type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	priv->out.kind = V4L_GST_MEDIA_KIND_CODEC;
+	priv->cap.buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	priv->cap.kind = V4L_GST_MEDIA_KIND_RAW;
+
+	priv->out.supported_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
+	priv->cap.supported_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 
 	if (!fill_config_video_format_out(priv)) {
 		GST_ERROR("Failed to fill in supported video format");
@@ -1338,8 +1236,8 @@ gst_backend_init(int fd)
 
 	g_mutex_init(&priv->queue_mutex);
 	g_cond_init(&priv->queue_cond);
-	g_mutex_init(&priv->cap_reqbuf_mutex);
-	g_cond_init(&priv->cap_reqbuf_cond);
+	g_mutex_init(&priv->cap.reqbuf_mutex);
+	g_cond_init(&priv->cap.reqbuf_cond);
 
 	g_mutex_init(&priv->dev_lock);
 
@@ -1352,10 +1250,10 @@ gst_backend_init(int fd)
 	return priv;
 
  error:
-	if (priv->supported_out_fmts)
-		g_array_free(priv->supported_out_fmts, TRUE);
-	if (priv->supported_cap_fmts)
-		g_array_free(priv->supported_cap_fmts, TRUE);
+	if (priv->out.supported_fmts)
+		g_array_free(priv->out.supported_fmts, TRUE);
+	if (priv->cap.supported_fmts)
+		g_array_free(priv->cap.supported_fmts, TRUE);
 	if (priv->config.pipelines)
 		g_hash_table_destroy(priv->config.pipelines);
 	g_free(priv->config.pool_lib_path);
@@ -1396,31 +1294,31 @@ gst_backend_deinit(struct v4l_gst *priv)
 		gst_object_unref(priv->video_sink_pad);
 	}
 
-	if (priv->out_buffers)
-		g_free(priv->out_buffers);
+	if (priv->out.buffers)
+		g_free(priv->out.buffers);
 
-	if (priv->cap_buffers)
-		g_free(priv->cap_buffers);
+	if (priv->cap.buffers)
+		g_free(priv->cap.buffers);
 
-	if (priv->src_pool)
-		gst_object_unref(priv->src_pool);
-	if (priv->sink_pool)
-		gst_object_unref(priv->sink_pool);
+	if (priv->out.pool)
+		gst_object_unref(priv->out.pool);
+	if (priv->cap.pool)
+		gst_object_unref(priv->cap.pool);
 
-	if (priv->supported_out_fmts)
-		g_array_free(priv->supported_out_fmts, TRUE);
-	if (priv->supported_cap_fmts)
-		g_array_free(priv->supported_cap_fmts, TRUE);
+	if (priv->out.supported_fmts)
+		g_array_free(priv->out.supported_fmts, TRUE);
+	if (priv->cap.supported_fmts)
+		g_array_free(priv->cap.supported_fmts, TRUE);
 
-	if (priv->cap_gstbufs_queue)
-		g_queue_free(priv->cap_gstbufs_queue);
-	if (priv->req_gstbufs_queue)
-		g_queue_free(priv->req_gstbufs_queue);
+	if (priv->cap.gstbufs_queue)
+		g_queue_free(priv->cap.gstbufs_queue);
+	if (priv->out.gstbufs_queue)
+		g_queue_free(priv->out.gstbufs_queue);
 	g_mutex_clear(&priv->queue_mutex);
 	g_cond_clear(&priv->queue_cond);
 
-	g_mutex_clear(&priv->cap_reqbuf_mutex);
-	g_cond_clear(&priv->cap_reqbuf_cond);
+	g_mutex_clear(&priv->cap.reqbuf_mutex);
+	g_cond_clear(&priv->cap.reqbuf_cond);
 
 	if (priv->pipeline)
 		gst_object_unref(priv->pipeline);
@@ -1495,13 +1393,13 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 	gchar fourcc_str[5];
-	GArray *cap_fmts = priv->supported_cap_fmts;
+	GArray *cap_fmts = priv->cap.supported_fmts;
 
 	pix_fmt = &fmt->fmt.pix_mp;
 	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->supported_out_fmts->data,
-				  priv->supported_out_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->out.supported_fmts->data,
+				  priv->out.supported_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
 			  fourcc_str, pix_fmt->pixelformat);
@@ -1516,13 +1414,13 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 	}
 
 	if (priv->pipeline) {
-		if (priv->out_fmt.pixelformat == pix_fmt->pixelformat) {
+		if (priv->out.fmt.pixelformat == pix_fmt->pixelformat) {
 			GST_INFO("Same pixelformat with current: %s",
 				 fourcc_str);
 		} else {
 			gchar current[5];
 
-			fourcc_to_string(priv->out_fmt.pixelformat, current);
+			fourcc_to_string(priv->out.fmt.pixelformat, current);
 			GST_ERROR("Different pixelformat with current: "
 				  "pixelformat:%s, current: %s",
 				  fourcc_str, current);
@@ -1535,12 +1433,12 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 			goto error;
 	}
 
-	priv->out_fmt = *pix_fmt;
+	priv->out.fmt = *pix_fmt;
 
 	set_params_as_encoded_stream(pix_fmt);
 
-	if (!priv->cap_fmt.pixelformat && cap_fmts->len > 0)
-		priv->cap_fmt.pixelformat
+	if (!priv->cap.fmt.pixelformat && cap_fmts->len > 0)
+		priv->cap.fmt.pixelformat
 			= ((struct fmt*)cap_fmts->data)[0].fourcc;
 
 	return 0;
@@ -1567,8 +1465,8 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->supported_cap_fmts->data,
-				  priv->supported_cap_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->cap.supported_fmts->data,
+				  priv->cap.supported_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on CAPTURE");
 		errno = EINVAL;
@@ -1577,11 +1475,11 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
-		priv->cap_fmt.pixelformat = pix_fmt->pixelformat;
+		priv->cap.fmt.pixelformat = pix_fmt->pixelformat;
 		init_decoded_frame_params(pix_fmt);
-	} else if (priv->cap_fmt.width != pix_fmt->width ||
-		   priv->cap_fmt.height != pix_fmt->height ||
-		   priv->cap_fmt.pixelformat != pix_fmt->pixelformat) {
+	} else if (priv->cap.fmt.width != pix_fmt->width ||
+		   priv->cap.fmt.height != pix_fmt->height ||
+		   priv->cap.fmt.pixelformat != pix_fmt->pixelformat) {
 		/* TODO: Should check the pix_fmt more strictly. */
 		gchar fourcc_str[5];
 		fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
@@ -1634,21 +1532,21 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 	gint i;
 	gchar fourcc_str[5];
 
-	if (!g_atomic_int_get(&priv->is_cap_fmt_acquirable) ||
-	    priv->out_cnt < INPUT_BUFFERING_CNT) {
+	if (!g_atomic_int_get(&priv->cap.fmt_acquirable) ||
+	    priv->out.cnt < INPUT_BUFFERING_CNT) {
 		errno = EINVAL;
 		return -1;
 	}
 
-	GST_DEBUG("cap format is acquirable. out_cnt = %d",priv->out_cnt);
+	GST_DEBUG("cap format is acquirable. out_cnt = %d",priv->out.cnt);
 
-	pix_fmt->width = priv->cap_fmt.width;
-	pix_fmt->height = priv->cap_fmt.height;
-	pix_fmt->pixelformat = priv->cap_fmt.pixelformat;
+	pix_fmt->width = priv->cap.fmt.width;
+	pix_fmt->height = priv->cap.fmt.height;
+	pix_fmt->pixelformat = priv->cap.fmt.pixelformat;
 	pix_fmt->field = V4L2_FIELD_NONE;
 	pix_fmt->colorspace = 0;
 	pix_fmt->flags = 0;
-	pix_fmt->num_planes = priv->cap_fmt.num_planes;
+	pix_fmt->num_planes = priv->cap.fmt.num_planes;
 
 	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 	GST_DEBUG("width:%d height:%d, format: %s (0x%x) num_planes=%d",
@@ -1656,14 +1554,14 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 		  fourcc_str, pix_fmt->pixelformat,
 		  pix_fmt->num_planes);
 
-	if (priv->cap_fmt.plane_fmt[0].sizeimage > 0) {
+	if (priv->cap.fmt.plane_fmt[0].sizeimage > 0) {
 		for (i = 0; i < pix_fmt->num_planes; i++) {
 			pix_fmt->plane_fmt[i].sizeimage =
-				priv->cap_fmt.plane_fmt[i].sizeimage;
+				priv->cap.fmt.plane_fmt[i].sizeimage;
 			pix_fmt->plane_fmt[i].bytesperline =
-				priv->cap_fmt.plane_fmt[i].bytesperline;
+				priv->cap.fmt.plane_fmt[i].bytesperline;
 		}
-		pix_fmt->num_planes = priv->cap_fmt.num_planes;
+		pix_fmt->num_planes = priv->cap.fmt.num_planes;
 	} else {
 		memset(pix_fmt->plane_fmt, 0, sizeof(pix_fmt->plane_fmt));
 	}
@@ -1684,7 +1582,7 @@ get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	if (fmt->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		g_mutex_lock(&priv->dev_lock);
-		*pix_fmt = priv->out_fmt;
+		*pix_fmt = priv->out.fmt;
 		g_mutex_unlock(&priv->dev_lock);
 		set_params_as_encoded_stream(pix_fmt);
 		ret = 0;
@@ -1710,12 +1608,12 @@ enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 		  v4l2_buffer_type_to_string(desc->type), desc->type, desc->index);
 
 	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		fmts = (struct fmt*)priv->supported_out_fmts->data;
-		fmts_num = priv->supported_out_fmts->len;
+		fmts = (struct fmt*)priv->out.supported_fmts->data;
+		fmts_num = priv->out.supported_fmts->len;
 		desc->flags = V4L2_FMT_FLAG_COMPRESSED;
 	} else if (desc->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		fmts = (struct fmt*)priv->supported_cap_fmts->data;
-		fmts_num = priv->supported_cap_fmts->len;
+		fmts = (struct fmt*)priv->cap.supported_fmts->data;
+		fmts_num = priv->cap.supported_fmts->len;
 		desc->flags = 0;
 	} else {
 		GST_ERROR("Invalid buf type");
@@ -1968,11 +1866,11 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	GstMapInfo info;
 	struct v4l_gst_buffer *buffer;
 
-	if (!check_v4l2_buffer(v4l2buf, priv->out_buffers, priv->out_buffers_num,
-			       priv->src_pool))
+	if (!check_v4l2_buffer(v4l2buf, priv->out.buffers, priv->out.buffers_num,
+			       priv->out.pool))
 		return -1;
 
-	buffer = &priv->out_buffers[v4l2buf->index];
+	buffer = &priv->out.buffers[v4l2buf->index];
 
 	if (v4l2buf->m.planes[0].bytesused == 0) {
 		flow_ret = gst_app_src_end_of_stream(GST_APP_SRC(priv->appsrc));
@@ -1999,7 +1897,7 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	}
 
 	GST_TRACE("queue index=%d buffer=%p", v4l2buf->index,
-		  priv->out_buffers[v4l2buf->index].gstbuf);
+		  priv->out.buffers[v4l2buf->index].gstbuf);
 
 	gst_buffer_unmap(buffer->gstbuf, &buffer->info);
 	memset(&buffer->info, 0, sizeof(buffer->info));
@@ -2040,8 +1938,8 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 	}
 
-	if (priv->out_cnt < INPUT_BUFFERING_CNT)
-		priv->out_cnt++;
+	if (priv->out.cnt < INPUT_BUFFERING_CNT)
+		priv->out.cnt++;
 
 	return 0;
 }
@@ -2052,21 +1950,21 @@ push_to_cap_gstbufs_queue(struct v4l_gst *priv, GstBuffer *gstbuf)
 	gboolean is_empty;
 	gint index;
 
-	index = g_queue_index(priv->req_gstbufs_queue, gstbuf);
+	index = g_queue_index(priv->out.gstbufs_queue, gstbuf);
 	if (index < 0)
 		return FALSE;
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	is_empty = g_queue_is_empty(priv->cap_gstbufs_queue);
-	g_queue_push_tail(priv->cap_gstbufs_queue, gstbuf);
+	is_empty = g_queue_is_empty(priv->cap.gstbufs_queue);
+	g_queue_push_tail(priv->cap.gstbufs_queue, gstbuf);
 
 	if (is_empty)
 		g_cond_signal(&priv->queue_cond);
 
 	g_mutex_unlock(&priv->queue_mutex);
 
-	g_queue_pop_nth_link(priv->req_gstbufs_queue, index);
+	g_queue_pop_nth_link(priv->out.gstbufs_queue, index);
 
 	return TRUE;
 }
@@ -2076,11 +1974,11 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	struct v4l_gst_buffer *buffer;
 
-	if (!check_v4l2_buffer(v4l2buf, priv->cap_buffers, priv->cap_buffers_num,
-			       priv->sink_pool))
+	if (!check_v4l2_buffer(v4l2buf, priv->cap.buffers, priv->cap.buffers_num,
+			       priv->cap.pool))
 		return -1;
 
-	buffer = &priv->cap_buffers[v4l2buf->index];
+	buffer = &priv->cap.buffers[v4l2buf->index];
 
 	if (priv->config.frame_check && gst_buffer_n_memory(buffer->gstbuf)) {
 		gpointer crc_p;
@@ -2119,7 +2017,7 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	   on CAPTURE, have already contained decoded frames.
 	   They should not back to the buffer pool and prepare to be
 	   dequeued as they are. */
-	if (g_queue_get_length(priv->req_gstbufs_queue) > 0) {
+	if (g_queue_get_length(priv->out.gstbufs_queue) > 0) {
 		GST_TRACE("push_to_cap_gstbufs_queue index=%d", v4l2buf->index);
 		if (push_to_cap_gstbufs_queue(priv, buffer->gstbuf)) {
 			buffer->state =V4L_GST_BUFFER_QUEUED;
@@ -2217,7 +2115,7 @@ fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 	v4l2buf->flags = 0;
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    priv->eos_state == EOS_GOT &&
-	    g_queue_is_empty(priv->cap_gstbufs_queue)) {
+	    g_queue_is_empty(priv->cap.gstbufs_queue)) {
 		GST_DEBUG("EOS: Set V4L2_BUF_FLAG_LAST");
 		v4l2buf->flags |= V4L2_BUF_FLAG_LAST;
 		priv->eos_state = EOS_NONE;
@@ -2283,7 +2181,7 @@ dequeue_non_blocking(GQueue *queue)
 static GstBuffer *
 dequeue_cap_buffer(struct v4l_gst *priv)
 {
-	GQueue *queue = priv->cap_gstbufs_queue;
+	GQueue *queue = priv->cap.gstbufs_queue;
 	GstBuffer *gstbuf = NULL;
 	guint len;
 
@@ -2354,8 +2252,8 @@ reindex_buffers(struct v4l_gst *priv)
 	gchar fd_str[8], error_fds[128] = {0};
 	gchar opened_fds[128] = {0}, initial_fds[128] = {0};
 
-	for (i = 0; i < priv->cap_buffers_num; ++i) {
-		struct v4l_gst_buffer *buf1 = &priv->cap_buffers[i];
+	for (i = 0; i < priv->cap.buffers_num; ++i) {
+		struct v4l_gst_buffer *buf1 = &priv->cap.buffers[i];
 		GstMemory *mem;
 		int fd;
 
@@ -2382,8 +2280,8 @@ reindex_buffers(struct v4l_gst *priv)
 		if (buf1->plane0_fd == fd)
 			continue;
 
-		for (j = 0; j < priv->cap_buffers_num; ++j) {
-			struct v4l_gst_buffer *buf2 = &priv->cap_buffers[j];
+		for (j = 0; j < priv->cap.buffers_num; ++j) {
+			struct v4l_gst_buffer *buf2 = &priv->cap.buffers[j];
 			GstBuffer *gstbuf = buf1->gstbuf;
 
 			if (i == j)
@@ -2398,7 +2296,7 @@ reindex_buffers(struct v4l_gst *priv)
 			i--;
 			break;
 		}
-		if (j >= priv->cap_buffers_num) {
+		if (j >= priv->cap.buffers_num) {
 			g_snprintf(fd_str, sizeof(fd_str), "%d:%d,", i, fd);
 			g_strlcat(error_fds, fd_str, sizeof(error_fds));
 		}
@@ -2423,30 +2321,30 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 	}
 
-	if (!check_no_index_v4l2_buffer(v4l2buf, priv->out_buffers,
-					priv->src_pool))
+	if (!check_no_index_v4l2_buffer(v4l2buf, priv->out.buffers,
+					priv->out.pool))
 		return -1;
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	gstbuf = acquire_buffer_from_pool(priv, priv->src_pool);
+	gstbuf = acquire_buffer_from_pool(priv, priv->out.pool);
 	if (!gstbuf) {
 		g_mutex_unlock(&priv->queue_mutex);
 		return -1;
 	}
 
-	priv->returned_out_buffers_num--;
+	priv->out.returned_cnt--;
 
-	if (priv->returned_out_buffers_num == 0) {
+	if (priv->out.returned_cnt == 0) {
 		clear_event(priv->event_state, POLLIN);
 	}
 
 
 	g_mutex_unlock(&priv->queue_mutex);
 
-	index = get_v4l2_buffer_index(priv->out_buffers,
-				      priv->out_buffers_num, gstbuf);
-	if (index >= priv->out_buffers_num) {
+	index = get_v4l2_buffer_index(priv->out.buffers,
+				      priv->out.buffers_num, gstbuf);
+	if (index >= priv->out.buffers_num) {
 		GST_ERROR("Failed to get a valid buffer index "
 			  "on OUTPUT");
 		errno = EINVAL;
@@ -2454,14 +2352,14 @@ dqbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	}
 
 	v4l2buf->index = index;
-	priv->out_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
+	priv->out.buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
 	GST_CAT_TRACE(v4l_gst_buffer_debug_category,
 		      "DQBUF OUT: gstbuf=%p, index=%d",
 		      gstbuf, index);
 
-	return fill_v4l2_buffer(priv, priv->src_pool,
-				priv->out_buffers, priv->out_buffers_num,
+	return fill_v4l2_buffer(priv, priv->out.pool,
+				priv->out.buffers, priv->out.buffers_num,
 				NULL, NULL, v4l2buf);
 }
 
@@ -2521,8 +2419,8 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	guint bytesused[GST_VIDEO_MAX_PLANES];
 	gint i;
 
-	if (!check_no_index_v4l2_buffer(v4l2buf, priv->cap_buffers,
-					priv->sink_pool))
+	if (!check_no_index_v4l2_buffer(v4l2buf, priv->cap.buffers,
+					priv->cap.pool))
 		return -1;
 
 	gstbuf = dequeue_cap_buffer(priv);
@@ -2531,9 +2429,9 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	reindex_buffers(priv);
 
-	index = get_v4l2_buffer_index(priv->cap_buffers,
-				      priv->cap_buffers_num, gstbuf);
-	if (index >= priv->cap_buffers_num) {
+	index = get_v4l2_buffer_index(priv->cap.buffers,
+				      priv->cap.buffers_num, gstbuf);
+	if (index >= priv->cap.buffers_num) {
 		GST_ERROR("Failed to get a valid buffer index "
 			  "on CAPTURE");
 		errno = EINVAL;
@@ -2543,18 +2441,18 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	v4l2buf->index = index;
 
-	for (i = 0; i < priv->cap_fmt.num_planes; i++)
-		bytesused[i] = priv->cap_fmt.plane_fmt[i].sizeimage;
+	for (i = 0; i < priv->cap.fmt.num_planes; i++)
+		bytesused[i] = priv->cap.fmt.plane_fmt[i].sizeimage;
 
-	if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
+	if (priv->cap.buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
 		/* It might occur when a buffer is unexpectedly queued
 		   after streamoff_ioctl_out(). In this case reference count of
 		   the buffer should already have been incremented, need to
 		   revert it here. */
 		GST_WARNING("Already dequeued buffer %u is dequeued again", index);
-		gst_buffer_unref(priv->cap_buffers[index].gstbuf);
+		gst_buffer_unref(priv->cap.buffers[index].gstbuf);
 	}
-	priv->cap_buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
+	priv->cap.buffers[v4l2buf->index].state = V4L_GST_BUFFER_DEQUEUED;
 
 	if (get_valid_cap_pts(priv, gstbuf, &pts)) {
 		GST_TIME_TO_TIMEVAL(pts, timestamp);
@@ -2565,8 +2463,8 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		      gstbuf, index, pts / 1000000,
 		      GST_BUFFER_PTS(gstbuf) / 1000000);
 
-	return fill_v4l2_buffer(priv, priv->sink_pool,
-				priv->cap_buffers, priv->cap_buffers_num,
+	return fill_v4l2_buffer(priv, priv->cap.pool,
+				priv->cap.buffers, priv->cap.buffers_num,
 				bytesused, timestamp_ptr, v4l2buf);
 }
 
@@ -2610,13 +2508,13 @@ querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	g_mutex_lock(&priv->dev_lock);
 
 	if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		buffers = priv->out_buffers;
-		buffers_num = priv->out_buffers_num;
-		pool = priv->src_pool;
+		buffers = priv->out.buffers;
+		buffers_num = priv->out.buffers_num;
+		pool = priv->out.pool;
 	} else if (v4l2buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		buffers = priv->cap_buffers;
-		buffers_num = priv->cap_buffers_num;
-		pool = priv->sink_pool;
+		buffers = priv->cap.buffers;
+		buffers_num = priv->cap.buffers_num;
+		pool = priv->cap.pool;
 	} else {
 		GST_ERROR("Invalid buf type");
 		errno = EINVAL;
@@ -2797,16 +2695,16 @@ force_out_dqbuf(struct v4l_gst *priv)
 {
 	g_mutex_lock(&priv->queue_mutex);
 
-	while (force_dqbuf_from_pool(priv->src_pool, priv->out_buffers,
-				     priv->out_buffers_num, TRUE) == GST_FLOW_OK) {
-		priv->returned_out_buffers_num--;
+	while (force_dqbuf_from_pool(priv->out.pool, priv->out.buffers,
+				     priv->out.buffers_num, TRUE) == GST_FLOW_OK) {
+		priv->out.returned_cnt--;
 	}
 
 	clear_event(priv->event_state, POLLIN);
 
 	g_mutex_unlock(&priv->queue_mutex);
 
-	GST_DEBUG("returned_out_buffers_num : %d", priv->returned_out_buffers_num);
+	GST_DEBUG("returned_out_buffers_num : %d", priv->out.returned_cnt);
 
 	return 0;
 }
@@ -2819,7 +2717,7 @@ force_cap_dqbuf(struct v4l_gst *priv)
 
 	do {
 		g_mutex_lock(&priv->queue_mutex);
-		gstbuf = dequeue_non_blocking(priv->cap_gstbufs_queue);
+		gstbuf = dequeue_non_blocking(priv->cap.gstbufs_queue);
 		/* This function may set errno but not need to expose it to
 		   clients in this case */
 		errno = 0;
@@ -2828,26 +2726,26 @@ force_cap_dqbuf(struct v4l_gst *priv)
 		if (!gstbuf)
 			break;
 
-		index = get_v4l2_buffer_index(priv->cap_buffers,
-					      priv->cap_buffers_num, gstbuf);
-		if (index >= priv->cap_buffers_num) {
+		index = get_v4l2_buffer_index(priv->cap.buffers,
+					      priv->cap.buffers_num, gstbuf);
+		if (index >= priv->cap.buffers_num) {
 			GST_ERROR("Failed to get a valid buffer index "
 				  "on CAPTURE");
 			errno = EINVAL;
 			return -1;
 		}
 
-		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
+		priv->cap.buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
 		GST_DEBUG("CAPTURE buffer %u is forcedly dequeued", index);
 	} while (gstbuf);
 
 	clear_event(priv->event_state, POLLOUT);
 
-	for (index = 0; index < priv->cap_buffers_num; index++) {
-		if (priv->cap_buffers[index].state == V4L_GST_BUFFER_DEQUEUED)
+	for (index = 0; index < priv->cap.buffers_num; index++) {
+		if (priv->cap.buffers[index].state == V4L_GST_BUFFER_DEQUEUED)
 			continue;
-		gst_buffer_ref(priv->cap_buffers[index].gstbuf);
-		priv->cap_buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
+		gst_buffer_ref(priv->cap.buffers[index].gstbuf);
+		priv->cap.buffers[index].state = V4L_GST_BUFFER_DEQUEUED;
 	}
 
 	return 0;
@@ -2860,8 +2758,8 @@ flush_pipeline(struct v4l_gst *priv)
 
 	GST_DEBUG("flush start");
 
-	gst_buffer_pool_set_flushing(priv->src_pool, TRUE);
-	gst_buffer_pool_set_flushing(priv->sink_pool, TRUE);
+	gst_buffer_pool_set_flushing(priv->out.pool, TRUE);
+	gst_buffer_pool_set_flushing(priv->cap.pool, TRUE);
 
 	event = gst_event_new_flush_start();
 	if (!gst_element_send_event(priv->pipeline, event)) {
@@ -2879,8 +2777,8 @@ flush_pipeline(struct v4l_gst *priv)
 		return -1;
 	}
 
-	gst_buffer_pool_set_flushing(priv->src_pool, FALSE);
-	gst_buffer_pool_set_flushing(priv->sink_pool, FALSE);
+	gst_buffer_pool_set_flushing(priv->out.pool, FALSE);
+	gst_buffer_pool_set_flushing(priv->cap.pool, FALSE);
 
 	GST_DEBUG("flush end");
 
@@ -2927,10 +2825,10 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	   of the OUTPUT bufferpool and freeing them by inactivating
 	   the bufferpool for flushing. */
 	if (steal_ref)
-		gst_buffer_ref(priv->out_buffers[0].gstbuf);
+		gst_buffer_ref(priv->out.buffers[0].gstbuf);
 
 	/* wake up blocking of the OUTPUT buffer acquisition */
-	if (!gst_buffer_pool_set_active(priv->src_pool, FALSE)) {
+	if (!gst_buffer_pool_set_active(priv->out.pool, FALSE)) {
 		GST_ERROR("Failed to inactivate buffer pool on OUTPUT");
 		errno = EINVAL;
 		return -1;
@@ -2972,16 +2870,16 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 			goto unlock;
 
 		/* Force to return dequeued buffers to the buffer pool. */
-		for (i = 0; i < priv->out_buffers_num; i++) {
-			if (priv->out_buffers[i].state ==
+		for (i = 0; i < priv->out.buffers_num; i++) {
+			if (priv->out.buffers[i].state ==
 			    V4L_GST_BUFFER_DEQUEUED) {
-				gst_buffer_unref(priv->out_buffers[i].gstbuf);
+				gst_buffer_unref(priv->out.buffers[i].gstbuf);
 			}
 		}
 
-		if (priv->out_buffers) {
-			g_free(priv->out_buffers);
-			priv->out_buffers = NULL;
+		if (priv->out.buffers) {
+			g_free(priv->out.buffers);
+			priv->out.buffers = NULL;
 		}
 
 		ret = 0;
@@ -2995,8 +2893,8 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		goto unlock;
 	}
 
-	if (gst_buffer_pool_is_active(priv->src_pool)) {
-		if (!gst_buffer_pool_set_active(priv->src_pool, FALSE)) {
+	if (gst_buffer_pool_is_active(priv->out.pool)) {
+		if (!gst_buffer_pool_set_active(priv->out.pool, FALSE)) {
 			GST_ERROR("Failed to inactivate buffer pool");
 			errno = EBUSY;
 			ret = -1;
@@ -3004,7 +2902,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		}
 	}
 
-	caps = get_codec_caps_from_fourcc(priv->out_fmt.pixelformat);
+	caps = get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		ret = -1;
@@ -3014,12 +2912,12 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 	adjusted_count = MAX(req->count, INPUT_BUFFERING_CNT);
 	adjusted_count = MIN(adjusted_count, VIDEO_MAX_FRAME);
 
-	set_buffer_pool_params(priv->src_pool, caps,
-			       priv->out_fmt.plane_fmt[0].sizeimage,
+	set_buffer_pool_params(priv->out.pool, caps,
+			       priv->out.fmt.plane_fmt[0].sizeimage,
 			       adjusted_count, adjusted_count, NULL);
 
-	allocated_num = alloc_buffers_from_pool(priv, priv->src_pool,
-						&priv->out_buffers);
+	allocated_num = alloc_buffers_from_pool(priv, priv->out.pool,
+						&priv->out.buffers);
 	if (allocated_num == 0) {
 		gst_caps_unref(caps);
 		ret = -1;
@@ -3030,19 +2928,19 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		/* Set identifiers for associating a GstBuffer with
 		   a V4L2 buffer in the V4L2 caller side. */
 		priv->mmap_offset =
-			set_mem_offset(&priv->out_buffers[i],
-				       priv->src_pool,
+			set_mem_offset(&priv->out.buffers[i],
+				       priv->out.pool,
 				       priv->mmap_offset);
 
-		priv->out_buffers[i].planes[0].length =
-			gst_buffer_get_size(priv->out_buffers[i].gstbuf);
+		priv->out.buffers[i].planes[0].length =
+			gst_buffer_get_size(priv->out.buffers[i].gstbuf);
 	}
 
-	req->count = priv->out_buffers_num = allocated_num;
+	req->count = priv->out.buffers_num = allocated_num;
 
 	GST_DEBUG("buffers count=%d", req->count);
 
-	priv->returned_out_buffers_num = 0;
+	priv->out.returned_cnt = 0;
 
 	ret = 0;
 
@@ -3060,7 +2958,7 @@ peek_first_cap_buffer(struct v4l_gst *priv)
 	gint64 end_time;
 
 	g_mutex_lock(&priv->queue_mutex);
-	gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
+	gstbuf = g_queue_peek_head(priv->out.gstbufs_queue);
 	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
 	while (!gstbuf && priv->is_pipeline_started) {
 		if (!g_cond_wait_until(&priv->queue_cond,
@@ -3069,7 +2967,7 @@ peek_first_cap_buffer(struct v4l_gst *priv)
 			timed_out = TRUE;
 			break;
 		}
-		gstbuf = g_queue_peek_head(priv->req_gstbufs_queue);
+		gstbuf = g_queue_peek_head(priv->out.gstbufs_queue);
 	}
 	g_mutex_unlock(&priv->queue_mutex);
 
@@ -3083,7 +2981,7 @@ static gboolean
 wait_for_all_bufs_collected(struct v4l_gst *priv,
 			    guint max_buffers)
 {
-	GQueue *queue = priv->req_gstbufs_queue;
+	GQueue *queue = priv->out.gstbufs_queue;
 	gboolean succeeded;
 	gboolean timed_out = FALSE;
 	gint64 end_time;
@@ -3138,10 +3036,10 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	gint i, j;
 	gboolean succeeded;
 
-	if (priv->cap_buffers)
+	if (priv->cap.buffers)
 		/* Cannot realloc the buffers without stopping the pipeline,
 		   so return the same number of the buffers so far. */
-		return priv->cap_buffers_num;
+		return priv->cap.buffers_num;
 
 	g_mutex_unlock(&priv->dev_lock);
 
@@ -3162,16 +3060,16 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	if (priv->sink_pool != first_gstbuf->pool) {
+	if (priv->cap.pool != first_gstbuf->pool) {
 		GST_DEBUG("The buffer pool we prepared is not used by "
 			  "the pipeline, so replace it with the pool that is "
 			  "actually used");
-		gst_object_unref(priv->sink_pool);
-		priv->sink_pool = gst_object_ref(first_gstbuf->pool);
+		gst_object_unref(priv->cap.pool);
+		priv->cap.pool = gst_object_ref(first_gstbuf->pool);
 	}
 
 	/* Confirm the number of buffers actually set to the buffer pool. */
-	get_buffer_pool_params(priv->sink_pool, NULL, NULL, NULL,
+	get_buffer_pool_params(priv->cap.pool, NULL, NULL, NULL,
 			       &actual_max_buffers);
 	if (actual_max_buffers == 0) {
 		GST_ERROR("Cannot handle the unlimited amount of buffers");
@@ -3179,8 +3077,8 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	if (!retrieve_cap_frame_info(priv->sink_pool, first_gstbuf,
-				     &priv->cap_fmt)) {
+	if (!retrieve_cap_frame_info(priv->cap.pool, first_gstbuf,
+				     &priv->cap.fmt)) {
 		GST_ERROR("Failed to retrieve frame info on CAPTURE");
 		errno = EINVAL;
 		return 0;
@@ -3198,31 +3096,31 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	priv->cap_buffers = g_new0(struct v4l_gst_buffer, actual_max_buffers);
+	priv->cap.buffers = g_new0(struct v4l_gst_buffer, actual_max_buffers);
 
 	for (i = 0; i < actual_max_buffers; i++) {
-		priv->cap_buffers[i].gstbuf =
-			g_queue_peek_nth(priv->req_gstbufs_queue, i);
+		priv->cap.buffers[i].gstbuf =
+			g_queue_peek_nth(priv->out.gstbufs_queue, i);
 
 		/* Set identifiers for associating a GstBuffer with
 		   a V4L2 buffer in the V4L2 caller side. */
-		priv->mmap_offset = set_mem_offset(&priv->cap_buffers[i],
-						   priv->sink_pool,
+		priv->mmap_offset = set_mem_offset(&priv->cap.buffers[i],
+						   priv->cap.pool,
 						   priv->mmap_offset);
 
-		priv->cap_buffers[i].state = V4L_GST_BUFFER_DEQUEUED;
+		priv->cap.buffers[i].state = V4L_GST_BUFFER_DEQUEUED;
 
 		/* assume that decoded image data has been filled to
 		   the entire plane size, because the GStreamer buffer
 		   information does not provides how much valid data size
 		   a GstBuffer has. */
-		for (j = 0; j < priv->cap_fmt.num_planes; j++) {
-			priv->cap_buffers[i].planes[j].length =
-				priv->cap_fmt.plane_fmt[j].sizeimage;
+		for (j = 0; j < priv->cap.fmt.num_planes; j++) {
+			priv->cap.buffers[i].planes[j].length =
+				priv->cap.fmt.plane_fmt[j].sizeimage;
 		}
 
 		GST_DEBUG("cap gst_buffer[%d] : %p", i,
-			  priv->cap_buffers[i].gstbuf);
+			  priv->cap.buffers[i].gstbuf);
 	}
 
 	GST_DEBUG("The number of buffers actually set to the buffer pool is %d",
@@ -3261,27 +3159,27 @@ stop_pipeline(struct v4l_gst *priv)
 		return ret;
 	}
 
-	g_atomic_int_set(&priv->is_cap_fmt_acquirable, 0);
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 0);
 
-	for (i = 0; i < priv->cap_buffers_num; i++) {
-		if (priv->cap_buffers[i].state ==
+	for (i = 0; i < priv->cap.buffers_num; i++) {
+		if (priv->cap.buffers[i].state ==
 		    V4L_GST_BUFFER_DEQUEUED) {
-			gst_buffer_unref(priv->cap_buffers[i].gstbuf);
+			gst_buffer_unref(priv->cap.buffers[i].gstbuf);
 		}
 	}
 
-	g_queue_clear(priv->req_gstbufs_queue);
-	g_queue_clear(priv->cap_gstbufs_queue);
+	g_queue_clear(priv->out.gstbufs_queue);
+	g_queue_clear(priv->cap.gstbufs_queue);
 	reset_cap_timestamp_state(priv);
 
 	set_pipeline_started(priv, FALSE);
 
-	if (priv->cap_buffers) {
-		g_free(priv->cap_buffers);
-		priv->cap_buffers = NULL;
+	if (priv->cap.buffers) {
+		g_free(priv->cap.buffers);
+		priv->cap.buffers = NULL;
 	}
-	priv->cap_buffers_num = 0;
-	init_decoded_frame_params(&priv->cap_fmt);
+	priv->cap.buffers_num = 0;
+	init_decoded_frame_params(&priv->cap.fmt);
 
 	return ret;
 }
@@ -3309,12 +3207,12 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 		goto unlock;
 	}
 
-	g_mutex_lock(&priv->cap_reqbuf_mutex);
-	priv->cap_buffers_num = MIN(req->count, VIDEO_MAX_FRAME);
-	g_cond_signal(&priv->cap_reqbuf_cond);
-	g_mutex_unlock(&priv->cap_reqbuf_mutex);
+	g_mutex_lock(&priv->cap.reqbuf_mutex);
+	priv->cap.buffers_num = MIN(req->count, VIDEO_MAX_FRAME);
+	g_cond_signal(&priv->cap.reqbuf_cond);
+	g_mutex_unlock(&priv->cap.reqbuf_mutex);
 
-	req->count = priv->cap_buffers_num = create_cap_buffers_list(priv);
+	req->count = priv->cap.buffers_num = create_cap_buffers_list(priv);
 	if (req->count == 0)
 		goto unlock;
 
@@ -3363,7 +3261,7 @@ set_out_format_to_pipeline(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 
-	caps = get_codec_caps_from_fourcc(priv->out_fmt.pixelformat);
+	caps = get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		return FALSE;
@@ -3383,12 +3281,12 @@ set_cap_format_to_pipeline(struct v4l_gst *priv)
 	GstVideoFormat fmt;
 	gboolean ret;
 
-	fmt = fourcc_to_gst_video_format(priv->cap_fmt.pixelformat);
+	fmt = fourcc_to_gst_video_format(priv->cap.fmt.pixelformat);
 	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
 		gchar fourcc_str[5];
-		fourcc_to_string(priv->cap_fmt.pixelformat, fourcc_str);
+		fourcc_to_string(priv->cap.fmt.pixelformat, fourcc_str);
 		GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
-			  fourcc_str, priv->cap_fmt.pixelformat);
+			  fourcc_str, priv->cap.fmt.pixelformat);
 		errno = EINVAL;
 		return FALSE;
 	}
@@ -3441,15 +3339,15 @@ streamon_ioctl_out(struct v4l_gst *priv)
 			return -1;
 	}
 
-	if (!gst_buffer_pool_is_active(priv->src_pool)) {
-		if (!gst_buffer_pool_set_active(priv->src_pool, TRUE)) {
+	if (!gst_buffer_pool_is_active(priv->out.pool)) {
+		if (!gst_buffer_pool_set_active(priv->out.pool, TRUE)) {
 			GST_ERROR("Failed to activate buffer pool");
 			errno = EINVAL;
 			return -1;
 		}
 
 		/* Restore the extra reference counted up in the streamoff */
-		gst_buffer_unref(priv->out_buffers[0].gstbuf);
+		gst_buffer_unref(priv->out.buffers[0].gstbuf);
 	}
 
 	priv->eos_state = EOS_NONE;
@@ -3603,8 +3501,8 @@ find_out_buffer_by_offset(struct v4l_gst *priv, int64_t offset)
 	gint index = -1;
 	gint i;
 
-	for (i = 0; i < priv->out_buffers_num; i++) {
-		if (priv->out_buffers[i].planes[0].m.mem_offset == offset) {
+	for (i = 0; i < priv->out.buffers_num; i++) {
+		if (priv->out.buffers[i].planes[0].m.mem_offset == offset) {
 			index = i;
 			break;
 		}
@@ -3623,19 +3521,19 @@ map_out_buffer(struct v4l_gst *priv, int index, int prot)
 	map_flags = (prot & PROT_READ) ? GST_MAP_READ : 0;
 	map_flags |= (prot & PROT_WRITE) ? GST_MAP_WRITE : 0;
 
-	if (!gst_buffer_map(priv->out_buffers[index].gstbuf, &info,
+	if (!gst_buffer_map(priv->out.buffers[index].gstbuf, &info,
 			    map_flags)) {
 		GST_ERROR("Failed to map buffer (%p)",
-			  priv->out_buffers[index].gstbuf);
+			  priv->out.buffers[index].gstbuf);
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
 
 	data = info.data;
 
-	gst_buffer_unmap(priv->out_buffers[index].gstbuf, &info);
+	gst_buffer_unmap(priv->out.buffers[index].gstbuf, &info);
 
-	priv->out_buffers[index].flags = map_flags;
+	priv->out.buffers[index].flags = map_flags;
 
 	return data;
 }
@@ -3646,9 +3544,9 @@ find_cap_buffer_by_offset(struct v4l_gst *priv,
 {
 	gint i, j;
 
-	for (i = 0; i < priv->cap_buffers_num; i++) {
-		for (j = 0; j < priv->cap_fmt.num_planes; j++) {
-			if (priv->cap_buffers[i].planes[j].m.mem_offset ==
+	for (i = 0; i < priv->cap.buffers_num; i++) {
+		for (j = 0; j < priv->cap.fmt.num_planes; j++) {
+			if (priv->cap.buffers[i].planes[j].m.mem_offset ==
 			    offset) {
 				*index = i;
 				*plane = j;
@@ -3672,29 +3570,29 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 	map_flags = (prot & PROT_READ) ? GST_MAP_READ : 0;
 	map_flags |= (prot & PROT_WRITE) ? GST_MAP_WRITE : 0;
 
-	if (!gst_buffer_map(priv->cap_buffers[index].gstbuf, &info,
+	if (!gst_buffer_map(priv->cap.buffers[index].gstbuf, &info,
 			    map_flags)) {
 		GST_ERROR("Failed to map buffer (%p)",
-			  priv->cap_buffers[index].gstbuf);
+			  priv->cap.buffers[index].gstbuf);
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
 
-	if (!get_raw_video_params(priv->sink_pool,
-				  priv->cap_buffers[index].gstbuf,
+	if (!get_raw_video_params(priv->cap.pool,
+				  priv->cap.buffers[index].gstbuf,
 				  NULL, &meta)) {
 		GST_ERROR("Failed to get video meta data");
 		errno = EINVAL;
-		gst_buffer_unmap(priv->cap_buffers[index].gstbuf,
-				 &priv->cap_buffers[index].info);
+		gst_buffer_unmap(priv->cap.buffers[index].gstbuf,
+				 &priv->cap.buffers[index].info);
 		return MAP_FAILED;
 	}
 
 	data = info.data + meta->offset[plane];
 
-	gst_buffer_unmap(priv->cap_buffers[index].gstbuf, &info);
+	gst_buffer_unmap(priv->cap.buffers[index].gstbuf, &info);
 
-	priv->cap_buffers[index].flags = map_flags;
+	priv->cap.buffers[index].flags = map_flags;
 
 	return data;
 }
@@ -3757,21 +3655,21 @@ expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 		return -1;
 	}
 
-	if (expbuf->index >= priv->cap_buffers_num) {
+	if (expbuf->index >= priv->cap.buffers_num) {
 		GST_ERROR("Buffer index is out of range!: %d/%d",
-			  expbuf->index, priv->cap_buffers_num);
+			  expbuf->index, priv->cap.buffers_num);
 		errno = EINVAL;
 		return -1;
 	}
 
-	if (expbuf->plane >= priv->cap_fmt.num_planes) {
+	if (expbuf->plane >= priv->cap.fmt.num_planes) {
 		GST_ERROR("Plane index is out of range!: %d/%d",
-			  expbuf->plane, priv->cap_fmt.num_planes);
+			  expbuf->plane, priv->cap.fmt.num_planes);
 		errno = EINVAL;
 		return -1;
 	}
 
-	buffer = &priv->cap_buffers[expbuf->index];
+	buffer = &priv->cap.buffers[expbuf->index];
 
 	if (expbuf->plane < gst_buffer_n_memory(buffer->gstbuf))
 		mem_index = expbuf->plane;
@@ -3826,8 +3724,8 @@ g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 		  selection->type, selection->target, selection->flags);
 
 	selection->r.top = selection->r.left = 0;
-	selection->r.width = priv->cap_fmt.width;
-	selection->r.height = priv->cap_fmt.height;
+	selection->r.width = priv->cap.fmt.width;
+	selection->r.height = priv->cap.fmt.height;
 
 	return 0;
 }
@@ -3990,8 +3888,8 @@ try_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *format)
 
 	fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->supported_out_fmts->data,
-				  priv->supported_out_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->out.supported_fmts->data,
+				  priv->out.supported_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on OUTPUT: %s (0x%x)",
 			  fourcc_str, pix_fmt->pixelformat);
@@ -4001,10 +3899,10 @@ try_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *format)
 	}
 
 	if (priv->pipeline &&
-	    priv->out_fmt.pixelformat != pix_fmt->pixelformat) {
+	    priv->out.fmt.pixelformat != pix_fmt->pixelformat) {
 		gchar current[5];
 
-		fourcc_to_string(priv->out_fmt.pixelformat, current);
+		fourcc_to_string(priv->out.fmt.pixelformat, current);
 		GST_ERROR("Different pixelformat with current: "
 			  "pixelformat:%s, current: %s",
 			  fourcc_str, current);
@@ -4023,8 +3921,8 @@ try_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *format)
 {
 	struct v4l2_pix_format_mplane *pix_fmt = &format->fmt.pix_mp;
 
-	if (!is_pix_fmt_supported((struct fmt*)priv->supported_cap_fmts->data,
-				  priv->supported_cap_fmts->len,
+	if (!is_pix_fmt_supported((struct fmt*)priv->cap.supported_fmts->data,
+				  priv->cap.supported_fmts->len,
 				  pix_fmt->pixelformat)) {
 		gchar fourcc_str[5];
 
