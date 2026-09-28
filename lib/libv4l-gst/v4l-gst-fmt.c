@@ -45,7 +45,7 @@
 #include "v4l-gst-internal.h"
 
 int
-querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
+v4l_gst_querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
 {
 	GST_DEBUG("VIDIOC_QUERYCAP");
 
@@ -140,7 +140,7 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 			return -1;
 		}
 	} else {
-		gboolean succeeded = init_pipeline(priv, pix_fmt->pixelformat);
+		gboolean succeeded = v4l_gst_core_init_pipeline(priv, pix_fmt->pixelformat);
 		if (!succeeded)
 			goto error;
 	}
@@ -161,7 +161,7 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 
 void
-init_decoded_frame_params(struct v4l2_pix_format_mplane *pix_fmt)
+v4l_gst_fmt_init_decoded_frame_params(struct v4l2_pix_format_mplane *pix_fmt)
 {
 	/* The following parameters will be determined after
 	   the video decoding starts. */
@@ -190,7 +190,7 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		priv->cap.fmt.pixelformat = pix_fmt->pixelformat;
-		init_decoded_frame_params(pix_fmt);
+		v4l_gst_fmt_init_decoded_frame_params(pix_fmt);
 	} else if (priv->cap.fmt.width != pix_fmt->width ||
 		   priv->cap.fmt.height != pix_fmt->height ||
 		   priv->cap.fmt.pixelformat != pix_fmt->pixelformat) {
@@ -216,7 +216,7 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 
 int
-set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
+v4l_gst_set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	int ret;
 
@@ -287,7 +287,7 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 
 
 int
-get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
+v4l_gst_get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 	int ret;
@@ -316,7 +316,7 @@ get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 
 int
-enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
+v4l_gst_enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 {
 	struct fmt *fmts;
 	gint fmts_num;
@@ -358,7 +358,7 @@ enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 
 
 int
-enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
+v4l_gst_enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
 {
 	gchar fourcc_str[5];
 
@@ -426,7 +426,7 @@ enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
 
 
 int
-g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
+v4l_gst_g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -511,7 +511,7 @@ try_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *format)
 
 
 int
-try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
+v4l_gst_try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 {
 	int ret;
 	gchar fourcc_str[5];
@@ -539,7 +539,7 @@ try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 
 
 int
-g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
+v4l_gst_g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
 {
 	const gchar *buf_type;
 #ifdef ENABLE_VIDIOC_DEBUG

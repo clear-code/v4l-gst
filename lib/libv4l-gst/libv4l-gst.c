@@ -41,7 +41,7 @@ static void *plugin_init(int fd)
 	}
 	fprintf(stderr, "DISABLE_VIDIOC_FEATURES: %s\n", vidioc_features);
 #endif
-	return gst_backend_init(fd);
+	return v4l_gst_init(fd);
 }
 
 static void plugin_close(void *dev_ops_priv)
@@ -51,7 +51,7 @@ static void plugin_close(void *dev_ops_priv)
 	if (!priv)
 		return;
 
-	gst_backend_deinit(priv);
+	v4l_gst_deinit(priv);
 }
 
 static int plugin_ioctl(void *dev_ops_priv, int fd,
@@ -64,76 +64,76 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 
 	switch (cmd) {
 	case VIDIOC_QUERYCAP:
-		ret = querycap_ioctl(priv, arg);
+		ret = v4l_gst_querycap_ioctl(priv, arg);
 		break;
 	case VIDIOC_S_FMT:
-		ret = set_fmt_ioctl(priv, arg);
+		ret = v4l_gst_set_fmt_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_FMT:
-		ret = get_fmt_ioctl(priv, arg);
+		ret = v4l_gst_get_fmt_ioctl(priv, arg);
 		break;
 	case VIDIOC_ENUM_FMT:
-		ret = enum_fmt_ioctl(priv, arg);
+		ret = v4l_gst_enum_fmt_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_CTRL:
-		ret = get_ctrl_ioctl(priv, arg);
+		ret = v4l_gst_get_ctrl_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_EXT_CTRLS:
-		ret = get_ext_ctrl_ioctl(priv, arg);
+		ret = v4l_gst_get_ext_ctrl_ioctl(priv, arg);
 		break;
 	case VIDIOC_QBUF:
-		ret = qbuf_ioctl(priv, arg);
+		ret = v4l_gst_qbuf_ioctl(priv, arg);
 		break;
 	case VIDIOC_DQBUF:
-		ret = dqbuf_ioctl(priv, arg);
+		ret = v4l_gst_dqbuf_ioctl(priv, arg);
 		break;
 	case VIDIOC_QUERYBUF:
-		ret = querybuf_ioctl(priv, arg);
+		ret = v4l_gst_querybuf_ioctl(priv, arg);
 		break;
 	case VIDIOC_REQBUFS:
-		ret = reqbuf_ioctl(priv, arg);
+		ret = v4l_gst_reqbuf_ioctl(priv, arg);
 		break;
 	case VIDIOC_STREAMON:
-		ret = streamon_ioctl(priv, arg);
+		ret = v4l_gst_streamon_ioctl(priv, arg);
 		break;
 	case VIDIOC_STREAMOFF:
-		ret = streamoff_ioctl(priv, arg);
+		ret = v4l_gst_streamoff_ioctl(priv, arg);
 		break;
 	case VIDIOC_SUBSCRIBE_EVENT:
-		ret = subscribe_event_ioctl(priv, arg);
+		ret = v4l_gst_subscribe_event_ioctl(priv, arg);
 		break;
 	case VIDIOC_DQEVENT:
-		ret = dqevent_ioctl(priv, arg);
+		ret = v4l_gst_dqevent_ioctl(priv, arg);
 		break;
 	case VIDIOC_EXPBUF:
-		ret = expbuf_ioctl(priv, arg);
+		ret = v4l_gst_expbuf_ioctl(priv, arg);
 		break;
 	case VIDIOC_ENUM_FRAMESIZES :
-		ret = enum_framesizes_ioctl(priv, arg);
+		ret = v4l_gst_enum_framesizes_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_SELECTION :
-		ret = g_selection_ioctl(priv, arg);
+		ret = v4l_gst_g_selection_ioctl(priv, arg);
 		break;
 	case VIDIOC_QUERYCTRL:
-		ret = queryctrl_ioctl(priv, arg);
+		ret = v4l_gst_queryctrl_ioctl(priv, arg);
 		break;
 	case VIDIOC_QUERYMENU:
-		ret = querymenu_ioctl(priv, arg);
+		ret = v4l_gst_querymenu_ioctl(priv, arg);
 		break;
 	case VIDIOC_G_CROP:
-		ret = g_crop_ioctl(priv, arg);
+		ret = v4l_gst_g_crop_ioctl(priv, arg);
 		break;
 	case VIDIOC_TRY_FMT:
-		ret = try_fmt_ioctl(priv, arg);
+		ret = v4l_gst_try_fmt_ioctl(priv, arg);
 		break;
 	case VIDIOC_UNSUBSCRIBE_EVENT:
-		ret = unsubscribe_event_ioctl(priv, arg);
+		ret = v4l_gst_unsubscribe_event_ioctl(priv, arg);
 		break;
 	case VIDIOC_DECODER_CMD:
-		ret = decoder_cmd_ioctl(priv, arg);
+		ret = v4l_gst_decoder_cmd_ioctl(priv, arg);
 		break;
 	case VIDIOC_TRY_DECODER_CMD:
-		ret = try_decoder_cmd_ioctl(priv, arg);
+		ret = v4l_gst_try_decoder_cmd_ioctl(priv, arg);
 		break;
 	default:
 		DBG_LOG("unknown ioctl: %lu\n", cmd);
@@ -149,7 +149,7 @@ plugin_mmap(void *dev_ops_priv, void *start, size_t length, int prot,
 	    int flags, int fd, int64_t offset)
 {
 	struct v4l_gst *priv = dev_ops_priv;
-	return gst_backend_mmap(priv, start, length, prot, flags, fd,
+	return v4l_gst_mmap(priv, start, length, prot, flags, fd,
 				offset);
 }
 

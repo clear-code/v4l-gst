@@ -23,33 +23,65 @@
 
 struct v4l_gst;
 
-struct v4l_gst* gst_backend_init(int fd);
-void gst_backend_deinit(struct v4l_gst *priv);
-int querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap);
-int set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt);
-int get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt);
-int enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc);
-int enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp);
-int get_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_control *ctrl);
-int qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
-int dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
-int querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
-int reqbuf_ioctl(struct v4l_gst *priv, struct v4l2_requestbuffers *req);
-int streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type);
-int streamoff_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type);
-int subscribe_event_ioctl(struct v4l_gst *priv, struct v4l2_event_subscription *sub);
-int dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev);
-int expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *buf);
-void * gst_backend_mmap(struct v4l_gst *priv, void *start, size_t length, int prot, int flags, int fd, int64_t offset);
-int get_ext_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_ctrls);
-int g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection);
-int queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl);
-int querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu);
-int g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop);
-int try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format);
-int try_decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd);
-int unsubscribe_event_ioctl(struct v4l_gst *priv, struct v4l2_event_subscription *subscription);
-int decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd);
+/*
+ * Public backend API, grouped by domain. Each domain is implemented in
+ * v4l-gst-<domain>.c; cross-TU helpers are declared in
+ * v4l-gst-internal.h.
+ */
+
+/* core: backend lifecycle */
+struct v4l_gst *v4l_gst_init(int fd);
+void v4l_gst_deinit(struct v4l_gst *priv);
+
+/* pipeline: decoder command */
+int v4l_gst_try_decoder_cmd_ioctl(struct v4l_gst *priv,
+					   struct v4l2_decoder_cmd *decoder_cmd);
+int v4l_gst_decoder_cmd_ioctl(struct v4l_gst *priv,
+				       struct v4l2_decoder_cmd *decoder_cmd);
+
+/* fmt: format */
+int v4l_gst_querycap_ioctl(struct v4l_gst *priv,
+			       struct v4l2_capability *cap);
+int v4l_gst_set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt);
+int v4l_gst_get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt);
+int v4l_gst_enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc);
+int v4l_gst_enum_framesizes_ioctl(struct v4l_gst *priv,
+				      struct v4l2_frmsizeenum *argp);
+int v4l_gst_g_selection_ioctl(struct v4l_gst *priv,
+				  struct v4l2_selection *selection);
+int v4l_gst_g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop);
+int v4l_gst_try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format);
+
+/* buf: buffer */
+int v4l_gst_qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
+int v4l_gst_dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
+int v4l_gst_querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *buf);
+int v4l_gst_reqbuf_ioctl(struct v4l_gst *priv,
+			     struct v4l2_requestbuffers *req);
+int v4l_gst_streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type);
+int v4l_gst_streamoff_ioctl(struct v4l_gst *priv,
+				enum v4l2_buf_type *type);
+int v4l_gst_expbuf_ioctl(struct v4l_gst *priv,
+			     struct v4l2_exportbuffer *buf);
+void *v4l_gst_mmap(struct v4l_gst *priv, void *start, size_t length,
+		       int prot, int flags, int fd, int64_t offset);
+
+/* ctrl: control */
+int v4l_gst_get_ctrl_ioctl(struct v4l_gst *priv,
+				struct v4l2_control *ctrl);
+int v4l_gst_get_ext_ctrl_ioctl(struct v4l_gst *priv,
+				    struct v4l2_ext_controls *ext_ctrls);
+int v4l_gst_queryctrl_ioctl(struct v4l_gst *priv,
+				 struct v4l2_queryctrl *query_ctrl);
+int v4l_gst_querymenu_ioctl(struct v4l_gst *priv,
+				 struct v4l2_querymenu *query_menu);
+
+/* event: event */
+int v4l_gst_subscribe_event_ioctl(struct v4l_gst *priv,
+					struct v4l2_event_subscription *sub);
+int v4l_gst_dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev);
+int v4l_gst_unsubscribe_event_ioctl(struct v4l_gst *priv,
+					  struct v4l2_event_subscription *subscription);
 
 #define ENV_DISABLE_VIDIOC_FEATURES "DISABLE_VIDIOC_FEATURES"
 

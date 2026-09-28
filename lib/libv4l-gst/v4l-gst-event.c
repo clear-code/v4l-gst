@@ -45,7 +45,7 @@
 #include "v4l-gst-internal.h"
 
 int
-subscribe_event_ioctl(struct v4l_gst *priv,
+v4l_gst_subscribe_event_ioctl(struct v4l_gst *priv,
 		      struct v4l2_event_subscription *subscription)
 {
 	int retval = -1;
@@ -82,7 +82,7 @@ subscribe_event_ioctl(struct v4l_gst *priv,
 
 
 int
-dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev)
+v4l_gst_dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev)
 {
 	int retval = -1;
 
@@ -126,7 +126,7 @@ dqevent_ioctl(struct v4l_gst *priv, struct v4l2_event *ev)
 
 
 int
-unsubscribe_event_ioctl(struct v4l_gst *priv,
+v4l_gst_unsubscribe_event_ioctl(struct v4l_gst *priv,
 			struct v4l2_event_subscription *subscription)
 {
 	int retval = 0;

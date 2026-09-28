@@ -57,7 +57,7 @@ release_out_buffer_unlocked(struct v4l_gst *priv, GstBuffer *gstbuf)
 
 
 void
-release_out_buffer(struct v4l_gst *priv, GstBuffer *gstbuf)
+v4l_gst_buf_release_out_buffer(struct v4l_gst *priv, GstBuffer *gstbuf)
 {
 	g_mutex_lock(&priv->queue_mutex);
 
@@ -104,7 +104,7 @@ check_no_index_v4l2_buffer(struct v4l2_buffer *v4l2buf,
 		return FALSE;
 	}
 
-	if (get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL,
+	if (v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL,
 				 &meta))
 		n_planes = meta->n_planes;
 	else
@@ -142,7 +142,7 @@ notify_unref(gpointer data)
 {
 	struct v4l_gst_buffer *buffer = data;
 
-	release_out_buffer(buffer->priv, buffer->gstbuf);
+	v4l_gst_buf_release_out_buffer(buffer->priv, buffer->gstbuf);
 }
 
 
@@ -325,7 +325,7 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret = -1;
 
@@ -399,7 +399,7 @@ fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 	GstVideoMeta *meta = NULL;
 	guint n_planes;
 
-	get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL, &meta);
+	v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL, &meta);
 
 	n_planes = (meta) ? meta->n_planes : 1;
 
@@ -774,7 +774,7 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret = -1;
 
@@ -800,7 +800,7 @@ dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	struct v4l_gst_buffer *buffers;
 	gint buffers_num;
@@ -855,7 +855,7 @@ set_mem_offset(struct v4l_gst_buffer *buffer, GstBufferPool *pool, gsize offset)
 	if (page_size < 0)
 		page_size = sysconf(_SC_PAGESIZE);
 
-	if (!get_raw_video_params(pool, buffer->gstbuf, &info, &meta)) {
+	if (!v4l_gst_pipeline_get_raw_video_params(pool, buffer->gstbuf, &info, &meta)) {
 		/* deal with this as a single plane */
 		buffer->planes[0].m.mem_offset = offset;
 		return PAGE_ALIGN(gst_buffer_get_size(buffer->gstbuf),
@@ -893,7 +893,7 @@ alloc_buffers_from_pool(struct v4l_gst *priv, GstBufferPool *pool,
 	/* The buffer pool parameters can not be changed after activation,
 	   so it is good time to confirm the number of buffers actually set to
 	   the buffer pool. */
-	get_buffer_pool_params(pool, NULL, NULL, NULL, &actual_max_buffers);
+	v4l_gst_pipeline_get_buffer_pool_params(pool, NULL, NULL, NULL, &actual_max_buffers);
 	if (actual_max_buffers == 0) {
 		GST_ERROR("Cannot handle the unlimited amount of buffers");
 		errno = EINVAL;
@@ -1048,7 +1048,7 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
 		      "STREAMOFF OUT begin: dequeue all OUT & CAP buffers ...");
 
-	set_pipeline_started(priv, FALSE);
+	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
 	GST_OBJECT_LOCK(priv->pipeline);
 	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
@@ -1060,7 +1060,7 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	GST_OBJECT_UNLOCK(priv->pipeline);
 
 
-	ret = flush_pipeline(priv);
+	ret = v4l_gst_pipeline_flush(priv);
 
 	if (ret < 0)
 		return ret;
@@ -1090,7 +1090,7 @@ streamoff_ioctl_out(struct v4l_gst *priv, gboolean steal_ref)
 	}
 
 	/* wake up blocking of the CAPTURE buffer acquisition */
-	set_pipeline_started(priv, FALSE);
+	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
 	GST_CAT_DEBUG(v4l_gst_buffer_debug_category, "STREAMOFF OUT end");
 
@@ -1158,7 +1158,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		}
 	}
 
-	caps = get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
+	caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		ret = -1;
@@ -1168,7 +1168,7 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 	adjusted_count = MAX(req->count, INPUT_BUFFERING_CNT);
 	adjusted_count = MIN(adjusted_count, VIDEO_MAX_FRAME);
 
-	set_buffer_pool_params(priv->out.pool, caps,
+	v4l_gst_pipeline_set_buffer_pool_params(priv->out.pool, caps,
 			       priv->out.fmt.plane_fmt[0].sizeimage,
 			       adjusted_count, adjusted_count, NULL);
 
@@ -1273,7 +1273,7 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
 	GstVideoMeta *meta;
 	gint i;
 
-	if (!get_raw_video_params(pool, gstbuf, &info, &meta)) {
+	if (!v4l_gst_pipeline_get_raw_video_params(pool, gstbuf, &info, &meta)) {
 		GST_ERROR("Failed to get video meta data");
 		return FALSE;
 	}
@@ -1329,7 +1329,7 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	}
 
 	/* Confirm the number of buffers actually set to the buffer pool. */
-	get_buffer_pool_params(priv->cap.pool, NULL, NULL, NULL,
+	v4l_gst_pipeline_get_buffer_pool_params(priv->cap.pool, NULL, NULL, NULL,
 			       &actual_max_buffers);
 	if (actual_max_buffers == 0) {
 		GST_ERROR("Cannot handle the unlimited amount of buffers");
@@ -1402,7 +1402,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 	g_mutex_lock(&priv->dev_lock);
 
 	if (req->count == 0) {
-		ret = stop_pipeline(priv);
+		ret = v4l_gst_pipeline_stop(priv);
 		goto unlock;
 	}
 
@@ -1434,7 +1434,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 
 
 int
-reqbuf_ioctl(struct v4l_gst *priv, struct v4l2_requestbuffers *req)
+v4l_gst_reqbuf_ioctl(struct v4l_gst *priv, struct v4l2_requestbuffers *req)
 {
 	int ret;
 
@@ -1474,9 +1474,9 @@ streamon_ioctl_out(struct v4l_gst *priv)
 	g_mutex_lock(&priv->dev_lock);
 
 	if (state == GST_STATE_NULL) {
-		if (!set_out_format_to_pipeline(priv))
+		if (!v4l_gst_pipeline_set_out_format(priv))
 			return -1;
-		if (!set_cap_format_to_pipeline(priv))
+		if (!v4l_gst_pipeline_set_cap_format(priv))
 			return -1;
 	}
 
@@ -1492,9 +1492,9 @@ streamon_ioctl_out(struct v4l_gst *priv)
 	}
 
 	priv->eos_state = EOS_NONE;
-	reset_cap_timestamp_state(priv);
+	v4l_gst_core_reset_cap_timestamp_state(priv);
 
-	set_pipeline_started(priv, TRUE);
+	v4l_gst_core_set_pipeline_started(priv, TRUE);
 
 	gst_element_set_state(priv->pipeline, GST_STATE_PLAYING);
 
@@ -1509,7 +1509,7 @@ streamon_ioctl_out(struct v4l_gst *priv)
 
 
 int
-streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
+v4l_gst_streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
 	int ret;
 
@@ -1532,7 +1532,7 @@ streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 
 
 int
-streamoff_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
+v4l_gst_streamoff_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
 	int ret;
 
@@ -1646,7 +1646,7 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 		return MAP_FAILED;
 	}
 
-	if (!get_raw_video_params(priv->cap.pool,
+	if (!v4l_gst_pipeline_get_raw_video_params(priv->cap.pool,
 				  priv->cap.buffers[index].gstbuf,
 				  NULL, &meta)) {
 		GST_ERROR("Failed to get video meta data");
@@ -1667,7 +1667,7 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 
 
 void *
-gst_backend_mmap(struct v4l_gst *priv, void *start, size_t length,
+v4l_gst_mmap(struct v4l_gst *priv, void *start, size_t length,
 		 int prot, int flags, int fd, int64_t offset)
 {
 	int index;
@@ -1709,7 +1709,7 @@ gst_backend_mmap(struct v4l_gst *priv, void *start, size_t length,
 
 
 int
-expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
+v4l_gst_expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 {
 	struct v4l_gst_buffer *buffer;
 	guint mem_index = 0;

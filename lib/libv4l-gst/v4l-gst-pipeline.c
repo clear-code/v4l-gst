@@ -88,7 +88,7 @@ get_cap_buffer_alignment(struct v4l_gst *priv, GstVideoAlignment *alignment)
 
 
 void
-set_buffer_pool_params(GstBufferPool *pool, GstCaps *caps, guint buf_size,
+v4l_gst_pipeline_set_buffer_pool_params(GstBufferPool *pool, GstCaps *caps, guint buf_size,
 		       guint min_buffers, guint max_buffers,
 		       GstVideoAlignment *alignment)
 {
@@ -107,7 +107,7 @@ set_buffer_pool_params(GstBufferPool *pool, GstCaps *caps, guint buf_size,
 
 
 void
-get_buffer_pool_params(GstBufferPool *pool, GstCaps **caps, guint *buf_size,
+v4l_gst_pipeline_get_buffer_pool_params(GstBufferPool *pool, GstCaps **caps, guint *buf_size,
 		       guint *min_buffers, guint *max_buffers)
 {
 	GstStructure *config;
@@ -205,7 +205,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		retrieve_cap_format_info(priv, &info);
 		get_cap_buffer_alignment(priv, &alignment);
 		g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
-		push_source_change_event(priv);
+		v4l_gst_core_push_source_change_event(priv);
 
 		set_event(priv->event_state, POLLOUT);
 
@@ -223,7 +223,7 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 		   `pipeline=h264parse ! omxh264dec no-reorder=true num-outbufs=7`
 		*/
 		if (wait_for_cap_reqbuf_invocation(priv)) {
-			set_buffer_pool_params(priv->cap.pool, caps, info.size,
+			v4l_gst_pipeline_set_buffer_pool_params(priv->cap.pool, caps, info.size,
 					       0, priv->cap.buffers_num,
 					       &alignment);
 			gst_query_add_allocation_pool(query, priv->cap.pool,
@@ -250,7 +250,7 @@ appsink_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 }
 
 
-GstPadProbeReturn
+static GstPadProbeReturn
 decoder_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
@@ -278,7 +278,7 @@ decoder_sink_pad_probe(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_d
 }
 
 
-void
+static void
 decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 {
 	struct v4l_gst *priv = data;
@@ -290,7 +290,7 @@ decoder_pad_unlinked_cb(GstPad *self, GstPad *peer, gpointer data)
 
 
 gulong
-setup_query_pad_probe(struct v4l_gst *priv)
+v4l_gst_pipeline_setup_query_pad_probe(struct v4l_gst *priv)
 {
 	gulong probe_id;
 
@@ -320,12 +320,12 @@ pull_buffer_from_sample(GstAppSink *appsink)
 }
 
 
-void
+static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
 	if (priv->eos_gstbuf)
-		release_out_buffer(priv, priv->eos_gstbuf);
+		v4l_gst_buf_release_out_buffer(priv, priv->eos_gstbuf);
 	g_mutex_lock(&priv->queue_mutex);
 	GST_DEBUG("EOS: Got from AppSink. Cached buffers: %u",
 		  g_queue_get_length(priv->cap.gstbufs_queue));
@@ -338,7 +338,7 @@ appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 }
 
 
-GstFlowReturn
+static GstFlowReturn
 appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
@@ -404,7 +404,39 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 
 gboolean
-get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, GstVideoInfo *info,
+v4l_gst_pipeline_setup_app_elements(struct v4l_gst *priv)
+{
+	/* Set the appsrc queue size to unlimited.
+	   The amount of buffers is managed by the buffer pool. */
+	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
+
+	gst_base_sink_set_sync(GST_BASE_SINK(priv->appsink), FALSE);
+
+	priv->appsink_cb.new_sample = appsink_callback_new_sample;
+	priv->appsink_cb.eos = appsink_callback_eos;
+
+	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
+				   &priv->appsink_cb, priv, NULL);
+
+	if (priv->decoder) {
+		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
+
+		g_signal_connect(G_OBJECT(pad), "unlinked",
+				 G_CALLBACK(decoder_pad_unlinked_cb), priv);
+		priv->decoder_probe_id
+			= gst_pad_add_probe(pad,
+					    GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+					    decoder_sink_pad_probe,
+					    priv, NULL);
+		gst_object_unref(pad);
+	}
+
+	return TRUE;
+}
+
+
+gboolean
+v4l_gst_pipeline_get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, GstVideoInfo *info,
 		     GstVideoMeta **meta)
 {
 	gboolean ret;
@@ -412,7 +444,7 @@ get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, GstVideoInfo *info,
 	GstVideoInfo vinfo;
 	GstVideoMeta *vmeta;
 
-	get_buffer_pool_params(pool, &caps, NULL, NULL, NULL);
+	v4l_gst_pipeline_get_buffer_pool_params(pool, &caps, NULL, NULL, NULL);
 
 	ret = gst_video_info_from_caps(&vinfo, caps);
 	if (!ret || GST_VIDEO_INFO_FORMAT(&vinfo) == GST_VIDEO_FORMAT_ENCODED)
@@ -432,7 +464,7 @@ get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, GstVideoInfo *info,
 
 
 GstCaps *
-get_codec_caps_from_fourcc(guint fourcc)
+v4l_gst_pipeline_get_codec_caps_from_fourcc(guint fourcc)
 {
 	const gchar *mime;
 
@@ -456,7 +488,7 @@ get_codec_caps_from_fourcc(guint fourcc)
 
 
 int
-flush_pipeline(struct v4l_gst *priv)
+v4l_gst_pipeline_flush(struct v4l_gst *priv)
 {
 	GstEvent *event;
 
@@ -491,7 +523,7 @@ flush_pipeline(struct v4l_gst *priv)
 
 
 int
-stop_pipeline(struct v4l_gst *priv)
+v4l_gst_pipeline_stop(struct v4l_gst *priv)
 {
 	GstStateChangeReturn state_ret;
 	int ret = 0;
@@ -499,7 +531,7 @@ stop_pipeline(struct v4l_gst *priv)
 
 	GST_DEBUG("req->count == 0, stop the pipeline");
 
-	set_pipeline_started(priv, FALSE);
+	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
 	state_ret = gst_element_set_state(priv->pipeline,
 					  GST_STATE_NULL);
@@ -531,16 +563,16 @@ stop_pipeline(struct v4l_gst *priv)
 
 	g_queue_clear(priv->out.gstbufs_queue);
 	g_queue_clear(priv->cap.gstbufs_queue);
-	reset_cap_timestamp_state(priv);
+	v4l_gst_core_reset_cap_timestamp_state(priv);
 
-	set_pipeline_started(priv, FALSE);
+	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
 	if (priv->cap.buffers) {
 		g_free(priv->cap.buffers);
 		priv->cap.buffers = NULL;
 	}
 	priv->cap.buffers_num = 0;
-	init_decoded_frame_params(&priv->cap.fmt);
+	v4l_gst_fmt_init_decoded_frame_params(&priv->cap.fmt);
 
 	return ret;
 }
@@ -556,11 +588,11 @@ relink_elements_with_caps_filtered(GstElement *src_elem, GstElement *dest_elem,
 
 
 gboolean
-set_out_format_to_pipeline(struct v4l_gst *priv)
+v4l_gst_pipeline_set_out_format(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 
-	caps = get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
+	caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		return FALSE;
@@ -574,7 +606,7 @@ set_out_format_to_pipeline(struct v4l_gst *priv)
 
 
 gboolean
-set_cap_format_to_pipeline(struct v4l_gst *priv)
+v4l_gst_pipeline_set_cap_format(struct v4l_gst *priv)
 {
 	GstElement *peer_elem;
 	GstCaps *caps;
@@ -594,7 +626,7 @@ set_cap_format_to_pipeline(struct v4l_gst *priv)
 	caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING,
 				   gst_video_format_to_string(fmt), NULL);
 
-	peer_elem = get_peer_element(priv->appsink, "sink");
+	peer_elem = v4l_gst_core_get_peer_element(priv->appsink, "sink");
 	if (!relink_elements_with_caps_filtered(peer_elem, priv->appsink,
 						caps)) {
 		GST_ERROR("Failed to relink elements with "
@@ -656,7 +688,7 @@ set_decoder_cmd_state(struct v4l_gst *priv, GstState state)
 
 #endif
 int
-try_decoder_cmd_ioctl(struct v4l_gst *priv,
+v4l_gst_try_decoder_cmd_ioctl(struct v4l_gst *priv,
 		      struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
@@ -697,7 +729,7 @@ try_decoder_cmd_ioctl(struct v4l_gst *priv,
 
 
 int
-decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
+v4l_gst_decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
 

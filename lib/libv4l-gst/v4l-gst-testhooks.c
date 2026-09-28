@@ -8,7 +8,7 @@
 GstElement *
 test_create_pipeline(const gchar *pipeline_str)
 {
-	return create_pipeline(pipeline_str);
+	return v4l_gst_core_create_pipeline(pipeline_str);
 }
 
 static void
@@ -27,7 +27,7 @@ prepare_format_backend_fixture(struct v4l_gst *priv)
 	if (!priv)
 		return;
 	if (!priv->pipeline)
-		priv->pipeline = create_pipeline("identity");
+		priv->pipeline = v4l_gst_core_create_pipeline("identity");
 	append_test_format(priv->cap.supported_fmts, V4L2_PIX_FMT_NV12, "NV12");
 
 	priv->out.fmt.pixelformat = V4L2_PIX_FMT_H264;

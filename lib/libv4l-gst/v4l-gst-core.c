@@ -51,7 +51,7 @@ GstDebugCategory *v4l_gst_buffer_debug_category;
 G_DEFINE_QUARK(cap_buf_crc, cap_buf_crc)
 
 void
-reset_cap_timestamp_state(struct v4l_gst *priv)
+v4l_gst_core_reset_cap_timestamp_state(struct v4l_gst *priv)
 {
 	priv->last_cap_pts = GST_CLOCK_TIME_NONE;
 	priv->estimated_cap_duration = GST_CLOCK_TIME_NONE;
@@ -206,7 +206,7 @@ parse_config_file(struct v4l_gst *priv)
 
 
 GstElement *
-create_pipeline(const gchar *pipeline_str)
+v4l_gst_core_create_pipeline(const gchar *pipeline_str)
 {
 	const gchar *format_str;
 	gchar *launch_str;
@@ -351,7 +351,7 @@ get_peer_pad(GstElement *elem, const gchar *pad_name)
 
 
 GstElement *
-get_peer_element(GstElement *elem, const gchar *pad_name)
+v4l_gst_core_get_peer_element(GstElement *elem, const gchar *pad_name)
 {
 	GstPad *peer_pad;
 	GstElement *peer_elem;
@@ -645,7 +645,7 @@ create_buffer_pool(struct libv4l_gst_buffer_pool_ops *pool_ops,
 
 
 void
-push_source_change_event(struct v4l_gst *priv)
+v4l_gst_core_push_source_change_event(struct v4l_gst *priv)
 {
 	struct v4l2_event *event = g_new0(struct v4l2_event, 1);
 
@@ -663,7 +663,7 @@ push_source_change_event(struct v4l_gst *priv)
 
 
 void
-set_pipeline_started(struct v4l_gst *priv, gboolean started)
+v4l_gst_core_set_pipeline_started(struct v4l_gst *priv, gboolean started)
 {
 	g_mutex_lock(&priv->cap.reqbuf_mutex);
 	priv->cap.cancel_reqbuf_wait = !started;
@@ -696,30 +696,8 @@ init_app_elements(struct v4l_gst *priv)
 	priv->cap.gstbufs_queue = g_queue_new();
 	priv->out.gstbufs_queue = g_queue_new();
 
-	/* Set the appsrc queue size to unlimited.
-	   The amount of buffers is managed by the buffer pool. */
-	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
-
-	gst_base_sink_set_sync(GST_BASE_SINK(priv->appsink), FALSE);
-
-	priv->appsink_cb.new_sample = appsink_callback_new_sample;
-	priv->appsink_cb.eos = appsink_callback_eos;
-
-	gst_app_sink_set_callbacks(GST_APP_SINK(priv->appsink),
-				   &priv->appsink_cb, priv, NULL);
-
-	if (priv->decoder) {
-		GstPad *pad = gst_element_get_static_pad(priv->decoder, "sink");
-
-		g_signal_connect(G_OBJECT(pad), "unlinked",
-				 G_CALLBACK(decoder_pad_unlinked_cb), priv);
-		priv->decoder_probe_id
-			= gst_pad_add_probe(pad,
-					    GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-					    decoder_sink_pad_probe,
-					    priv, NULL);
-		gst_object_unref(pad);
-	}
+	if (!v4l_gst_pipeline_setup_app_elements(priv))
+		return FALSE;
 
 	return TRUE;
 }
@@ -738,7 +716,7 @@ init_buffer_pool(struct v4l_gst *priv)
 	create_buffer_pool(priv->pool_ops, &priv->out.pool, &priv->cap.pool);
 
 	/* To hook allocation queries */
-	priv->probe_id = setup_query_pad_probe(priv);
+	priv->probe_id = v4l_gst_pipeline_setup_query_pad_probe(priv);
 	if (priv->probe_id == 0) {
 		GST_ERROR("Failed to setup query pad probe");
 		goto free_pool;
@@ -758,7 +736,7 @@ init_buffer_pool(struct v4l_gst *priv)
 
 
 gboolean
-init_pipeline(struct v4l_gst *priv, guint32 fourcc)
+v4l_gst_core_init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 {
 	gchar fourcc_str[5];
 	const gchar *pipeline;
@@ -768,7 +746,7 @@ init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 
 	if (pipeline) {
 		GST_DEBUG("create %s pipeline: %s", fourcc_str, pipeline);
-		priv->pipeline = create_pipeline(pipeline);
+		priv->pipeline = v4l_gst_core_create_pipeline(pipeline);
 	}
 
 	if (!priv->pipeline) {
@@ -805,7 +783,7 @@ init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 
 
 struct v4l_gst*
-gst_backend_init(int fd)
+v4l_gst_init(int fd)
 {
 	static gboolean gstreamer_initialized = FALSE;
 	struct v4l_gst *priv;
@@ -831,7 +809,7 @@ gst_backend_init(int fd)
 		GST_ERROR("Couldn't allocate memory for gst-backend");
 		return NULL;
 	}
-	reset_cap_timestamp_state(priv);
+	v4l_gst_core_reset_cap_timestamp_state(priv);
 
 	/* Reject character device */
 	fstat(fd, &buf);
@@ -891,7 +869,7 @@ gst_backend_init(int fd)
 	g_mutex_init(&priv->dev_lock);
 
 	if (priv->config.fixed_pipeline) {
-		if (!init_pipeline(priv, priv->config.fixed_pipeline))
+		if (!v4l_gst_core_init_pipeline(priv, priv->config.fixed_pipeline))
 			goto error;
 	}
 
@@ -915,11 +893,11 @@ gst_backend_init(int fd)
 
 
 void
-gst_backend_deinit(struct v4l_gst *priv)
+v4l_gst_deinit(struct v4l_gst *priv)
 {
-	GST_DEBUG("gst_backend_deinit start");
+	GST_DEBUG("v4l_gst_deinit start");
 
-	set_pipeline_started(priv, FALSE);
+	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
 	g_mutex_clear(&priv->dev_lock);
 
@@ -982,6 +960,6 @@ gst_backend_deinit(struct v4l_gst *priv)
 
 	g_free(priv);
 
-	GST_DEBUG("gst_backend_deinit end");
+	GST_DEBUG("v4l_gst_deinit end");
 }
 
