@@ -173,7 +173,7 @@ extern GstDebugCategory *v4l_gst_ioctl_debug_category;
 extern GstDebugCategory *v4l_gst_buffer_debug_category;
 #define GST_CAT_DEFAULT v4l_gst_debug_category
 
-GQuark cap_buf_crc_quark(void);
+GQuark	      cap_buf_crc_quark				   (void);
 
 /*
  * Functions shared between the v4l-gst-*.c translation units,
@@ -181,42 +181,45 @@ GQuark cap_buf_crc_quark(void);
  */
 
 /* core */
-GstElement *v4l_gst_core_create_pipeline(const gchar *pipeline_str);
-GstElement *v4l_gst_core_get_peer_element(GstElement *elem,
-					  const gchar *pad_name);
-gboolean v4l_gst_core_init_pipeline(struct v4l_gst *priv, guint32 fourcc);
-void v4l_gst_core_push_source_change_event(struct v4l_gst *priv);
-void v4l_gst_core_reset_cap_timestamp_state(struct v4l_gst *priv);
-void v4l_gst_core_set_pipeline_started(struct v4l_gst *priv, gboolean started);
+GstElement *  v4l_gst_core_create_pipeline		   (const gchar *pipeline_str);
+GstElement *  v4l_gst_core_get_peer_element		   (GstElement *elem,
+							    const gchar *pad_name);
+gboolean      v4l_gst_core_init_pipeline		   (struct v4l_gst *priv,
+							    guint32 fourcc);
+void	      v4l_gst_core_push_source_change_event	   (struct v4l_gst *priv);
+void	      v4l_gst_core_reset_cap_timestamp_state	   (struct v4l_gst *priv);
+void	      v4l_gst_core_set_pipeline_started		   (struct v4l_gst *priv,
+							    gboolean started);
 
 /* pipeline */
-GstCaps *v4l_gst_pipeline_get_codec_caps_from_fourcc(guint fourcc);
-gboolean v4l_gst_pipeline_get_raw_video_params(GstBufferPool *pool,
-					       GstBuffer *gstbuf,
-					       GstVideoInfo *info,
-					       GstVideoMeta **meta);
-void v4l_gst_pipeline_get_buffer_pool_params(GstBufferPool *pool,
-					     GstCaps **caps,
-					     guint *buf_size,
-					     guint *min_buffers,
-					     guint *max_buffers);
-int v4l_gst_pipeline_flush(struct v4l_gst *priv);
-gboolean v4l_gst_pipeline_set_out_format(struct v4l_gst *priv);
-gboolean v4l_gst_pipeline_set_cap_format(struct v4l_gst *priv);
-void v4l_gst_pipeline_set_buffer_pool_params(GstBufferPool *pool,
-					     GstCaps *caps,
-					     guint buf_size,
-					     guint min_buffers,
-					     guint max_buffers,
-					     GstVideoAlignment *alignment);
-gboolean v4l_gst_pipeline_setup_app_elements(struct v4l_gst *priv);
-gulong v4l_gst_pipeline_setup_query_pad_probe(struct v4l_gst *priv);
-int v4l_gst_pipeline_stop(struct v4l_gst *priv);
+GstCaps *     v4l_gst_pipeline_get_codec_caps_from_fourcc  (guint fourcc);
+gboolean      v4l_gst_pipeline_get_raw_video_params	   (GstBufferPool *pool,
+							    GstBuffer *gstbuf,
+							    GstVideoInfo *info,
+							    GstVideoMeta **meta);
+void	      v4l_gst_pipeline_get_buffer_pool_params	   (GstBufferPool *pool,
+							    GstCaps **caps,
+							    guint *buf_size,
+							    guint *min_buffers,
+							    guint *max_buffers);
+int	      v4l_gst_pipeline_flush			   (struct v4l_gst *priv);
+gboolean      v4l_gst_pipeline_set_out_format		   (struct v4l_gst *priv);
+gboolean      v4l_gst_pipeline_set_cap_format		   (struct v4l_gst *priv);
+void	      v4l_gst_pipeline_set_buffer_pool_params	   (GstBufferPool *pool,
+							    GstCaps *caps,
+							    guint buf_size,
+							    guint min_buffers,
+							    guint max_buffers,
+							    GstVideoAlignment *alignment);
+gboolean      v4l_gst_pipeline_setup_app_elements	   (struct v4l_gst *priv);
+gulong	      v4l_gst_pipeline_setup_query_pad_probe	   (struct v4l_gst *priv);
+int	      v4l_gst_pipeline_stop			   (struct v4l_gst *priv);
 
 /* fmt */
-void v4l_gst_fmt_init_decoded_frame_params(struct v4l2_pix_format_mplane *pix_fmt);
+void	      v4l_gst_fmt_init_decoded_frame_params	   (struct v4l2_pix_format_mplane *pix_fmt);
 
 /* buf */
-void v4l_gst_buf_release_out_buffer(struct v4l_gst *priv, GstBuffer *gstbuf);
+void	      v4l_gst_buf_release_out_buffer		   (struct v4l_gst *priv,
+							    GstBuffer *gstbuf);
 
 #endif /* __V4L_GST_INTERNAL_H__ */
