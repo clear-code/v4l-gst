@@ -914,3 +914,441 @@ test_get_fmt_rejects_single_planar_type(void)
 
 	assert_equal_result_strings(expected_string, actual_string);
 }
+
+static const gchar *
+role_to_string(enum v4l_gst_role role)
+{
+	switch (role) {
+	case V4L_GST_ROLE_NONE:
+		return "none";
+	case V4L_GST_ROLE_DECODER:
+		return "decoder";
+	case V4L_GST_ROLE_ENCODER:
+		return "encoder";
+	}
+	return "unknown";
+}
+
+static void
+assert_role(enum v4l_gst_role expected)
+{
+	const gchar *expected_str = role_to_string(expected);
+	const gchar *actual_str = role_to_string(get_backend_role(backend));
+
+	cut_assert_equal_string(expected_str, actual_str,
+				cut_message("expected role %s, got %s",
+					    expected_str, actual_str));
+}
+
+void
+test_role_is_decoder_with_decode_only_config(void)
+{
+	assert_role(V4L_GST_ROLE_DECODER);
+}
+
+void
+test_role_is_encoder_with_encode_only_config(void)
+{
+	prepare_encode_only_role_backend_fixture(backend);
+
+	assert_role(V4L_GST_ROLE_ENCODER);
+}
+
+void
+test_encode_only_enum_fmt_output_is_raw(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected = {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.flags = 0,
+	};
+	struct enum_fmt_result actual;
+	const gchar *expected_string =
+		cut_take_string(enum_fmt_result_to_string(&expected));
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_encode_only_enum_fmt_output_rejects_second_index(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected = {
+		.ret = -1,
+		.error_number = EINVAL,
+		.flags = V4L2_FMT_FLAG_COMPRESSED,
+	};
+	struct enum_fmt_result actual;
+	const gchar *expected_string =
+		cut_take_string(enum_fmt_result_to_string(&expected));
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	desc.index = 1;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_encode_only_enum_fmt_capture_is_compressed(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected = {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_H264,
+		.flags = V4L2_FMT_FLAG_COMPRESSED,
+	};
+	struct enum_fmt_result actual;
+	const gchar *expected_string =
+		cut_take_string(enum_fmt_result_to_string(&expected));
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_encode_only_set_fmt_output_keeps_raw_dimensions(void)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_pix_format_mplane *pix = &format.fmt.pix_mp;
+	int ret;
+	struct pix_format_result expected = {
+		.ret = 0,
+		.error_number = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.width = 640,
+		.height = 480,
+		.num_planes = 1,
+		.bytesperline = 640,
+		.sizeimage = 640 * 480 * 3 / 2,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	pix->pixelformat = V4L2_PIX_FMT_NV12;
+	pix->width = 640;
+	pix->height = 480;
+	pix->num_planes = 1;
+	pix->plane_fmt[0].bytesperline = 640;
+	pix->plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_encode_only_set_fmt_capture_accepts_codec(void)
+{
+	struct v4l2_format format = { 0, };
+	int ret;
+	struct pix_format_result expected = {
+		.ret = 0,
+		.error_number = 0,
+		.pixelformat = V4L2_PIX_FMT_H264,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 1024;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_encode_only_get_fmt_output_keeps_raw_dimensions(void)
+{
+	struct v4l2_format format = { 0, };
+	int ret;
+	struct pix_format_result expected = {
+		.ret = 0,
+		.error_number = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.width = 640,
+		.height = 480,
+		.num_planes = 1,
+		.bytesperline = 640,
+		.sizeimage = 640 * 480 * 3 / 2,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_encode_only_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_dual_role_stays_none_until_output_format(void)
+{
+	prepare_dual_role_backend_fixture(backend);
+
+	assert_role(V4L_GST_ROLE_NONE);
+}
+
+void
+test_dual_enum_fmt_output_lists_codec_then_raw(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected;
+	struct enum_fmt_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_dual_role_backend_fixture(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	desc.index = 0;
+	expected = (struct enum_fmt_result) {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_H264,
+		.flags = V4L2_FMT_FLAG_COMPRESSED,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+
+	desc.index = 1;
+	expected = (struct enum_fmt_result) {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.flags = 0,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+
+	desc.index = 2;
+	expected = (struct enum_fmt_result) {
+		.ret = -1,
+		.error_number = EINVAL,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.flags = V4L2_FMT_FLAG_COMPRESSED,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_dual_enum_fmt_capture_lists_raw_then_codec(void)
+{
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	struct enum_fmt_result expected;
+	struct enum_fmt_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_dual_role_backend_fixture(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	desc.index = 0;
+	expected = (struct enum_fmt_result) {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.flags = 0,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+
+	desc.index = 1;
+	expected = (struct enum_fmt_result) {
+		.ret = 0,
+		.pixelformat = V4L2_PIX_FMT_H264,
+		.flags = V4L2_FMT_FLAG_COMPRESSED,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+
+	desc.index = 2;
+	expected = (struct enum_fmt_result) {
+		.ret = -1,
+		.error_number = EINVAL,
+		.pixelformat = V4L2_PIX_FMT_H264,
+	};
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	actual = snapshot_enum_fmt_result(ret, errno, &desc);
+	expected_string = cut_take_string(enum_fmt_result_to_string(&expected));
+	actual_string = cut_take_string(enum_fmt_result_to_string(&actual));
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_dual_set_fmt_output_codec_fixes_decoder_role(void)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_pix_format_mplane *pix = &format.fmt.pix_mp;
+	int ret;
+	struct pix_format_result expected = {
+		.ret = 0,
+		.error_number = 0,
+		.pixelformat = V4L2_PIX_FMT_H264,
+		.width = 0,
+		.height = 0,
+		.num_planes = 1,
+		.sizeimage = 2048,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_dual_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	pix->pixelformat = V4L2_PIX_FMT_H264;
+	pix->plane_fmt[0].sizeimage = 2048;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+	assert_role(V4L_GST_ROLE_DECODER);
+}
+
+void
+test_dual_set_fmt_output_raw_fixes_encoder_role(void)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_pix_format_mplane *pix = &format.fmt.pix_mp;
+	int ret;
+	struct pix_format_result expected = {
+		.ret = 0,
+		.error_number = 0,
+		.pixelformat = V4L2_PIX_FMT_NV12,
+		.width = 640,
+		.height = 480,
+		.num_planes = 1,
+		.bytesperline = 640,
+		.sizeimage = 640 * 480 * 3 / 2,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_dual_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	pix->pixelformat = V4L2_PIX_FMT_NV12;
+	pix->width = 640;
+	pix->height = 480;
+	pix->num_planes = 1;
+	pix->plane_fmt[0].bytesperline = 640;
+	pix->plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+	assert_role(V4L_GST_ROLE_ENCODER);
+}
+
+void
+test_dual_set_fmt_capture_rejected_before_role_fixed(void)
+{
+	struct v4l2_format format = { 0, };
+	int ret;
+	struct pix_format_result expected = {
+		.ret = -1,
+		.error_number = EINVAL,
+		.pixelformat = V4L2_PIX_FMT_H264,
+	};
+	struct pix_format_result actual;
+	const gchar *expected_string;
+	const gchar *actual_string;
+
+	prepare_dual_role_backend_fixture(backend);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	actual = snapshot_pix_format(ret, errno, &format);
+	expected_string = cut_take_string(pix_format_result_to_string(&expected));
+	actual_string = cut_take_string(pix_format_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+	assert_role(V4L_GST_ROLE_NONE);
+}

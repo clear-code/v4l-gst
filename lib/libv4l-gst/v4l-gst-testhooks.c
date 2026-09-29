@@ -42,4 +42,60 @@ prepare_format_backend_fixture(struct v4l_gst *priv)
 	priv->out.cnt = INPUT_BUFFERING_CNT;
 }
 
+/*
+ * Reconfigure the backend of a decode-only config into an encoder-only role:
+ * the decode pipeline is dropped, an encode pipeline is added and the role
+ * is re-derived. The GStreamer pipeline itself is kept (already created as
+ * "identity" by prepare_format_backend_fixture()).
+ */
+void
+prepare_encode_only_role_backend_fixture(struct v4l_gst *priv)
+{
+	g_hash_table_remove(priv->config.pipelines, "H264");
+	g_hash_table_insert(priv->config.encode_pipelines, g_strdup("H264"),
+			    g_strdup("identity"));
+	v4l_gst_core_setup_role(priv);
+
+	priv->out.fmt.pixelformat = V4L2_PIX_FMT_NV12;
+	priv->out.fmt.width = 640;
+	priv->out.fmt.height = 480;
+	priv->out.fmt.num_planes = 1;
+	priv->out.fmt.plane_fmt[0].bytesperline = 640;
+	priv->out.fmt.plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+	priv->cap.fmt.pixelformat = V4L2_PIX_FMT_H264;
+	priv->cap.fmt.plane_fmt[0].sizeimage = 1024;
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+	priv->out.cnt = INPUT_BUFFERING_CNT;
+}
+
+/*
+ * Reconfigure the backend of a decode-only config into the dual role: both
+ * the decode and the encode pipeline are configured, so the role stays
+ * V4L_GST_ROLE_NONE until the first OUTPUT format fixes it.
+ */
+void
+prepare_dual_role_backend_fixture(struct v4l_gst *priv)
+{
+	g_hash_table_insert(priv->config.encode_pipelines, g_strdup("H264"),
+			    g_strdup("identity"));
+	v4l_gst_core_setup_role(priv);
+
+	priv->out.fmt.pixelformat = V4L2_PIX_FMT_H264;
+	priv->out.fmt.plane_fmt[0].sizeimage = 1024;
+	priv->cap.fmt.pixelformat = V4L2_PIX_FMT_NV12;
+	priv->cap.fmt.width = 640;
+	priv->cap.fmt.height = 480;
+	priv->cap.fmt.num_planes = 1;
+	priv->cap.fmt.plane_fmt[0].bytesperline = 640;
+	priv->cap.fmt.plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+	priv->out.cnt = INPUT_BUFFERING_CNT;
+}
+
+enum v4l_gst_role
+get_backend_role(struct v4l_gst *priv)
+{
+	return priv->role;
+}
+
 #endif

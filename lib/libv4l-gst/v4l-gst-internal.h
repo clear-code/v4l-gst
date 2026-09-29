@@ -73,10 +73,25 @@ enum v4l_gst_media_kind {
 };
 
 /*
+ * M2M role of the plugin:
+ *
+ *  - V4L_GST_ROLE_NONE    : both decode and encode pipelines are configured,
+ *                           the role is fixed by the first OUTPUT format
+ *  - V4L_GST_ROLE_DECODER : OUTPUT carries CODEC, CAPTURE carries RAW
+ *  - V4L_GST_ROLE_ENCODER : OUTPUT carries RAW,  CAPTURE carries CODEC
+ */
+enum v4l_gst_role {
+	V4L_GST_ROLE_NONE,
+	V4L_GST_ROLE_DECODER,
+	V4L_GST_ROLE_ENCODER,
+};
+
+/*
  * State of one M2M stream direction (OUTPUT or CAPTURE).
  */
 struct v4l_gst_stream {
 	enum v4l2_buf_type buf_type;
+	/* valid only once the role is fixed (priv->role != V4L_GST_ROLE_NONE) */
 	enum v4l_gst_media_kind kind;
 
 	struct v4l2_pix_format_mplane fmt;
@@ -130,7 +145,11 @@ struct v4l_gst {
 	 *
 	 *  decoder: out.kind = CODEC (e.g. H.264), cap.kind = RAW (e.g. NV12)
 	 *  encoder: out.kind = RAW (e.g. NV12),  cap.kind = CODEC (e.g. H.264)
+	 *
+	 *  role stays V4L_GST_ROLE_NONE until the first OUTPUT format fixes
+	 *  it when both decode and encode pipelines are configured.
 	 */
+	enum v4l_gst_role role;
 	struct v4l_gst_stream out;
 	struct v4l_gst_stream cap;
 
@@ -153,6 +172,7 @@ struct v4l_gst {
 		guint32 preferred_format;
 		guint32 fixed_pipeline;
 		GHashTable *pipelines; /* gchar *fourcc, gchar *pipeline */
+		GHashTable *encode_pipelines; /* gchar *fourcc, gchar *encode-pipeline */
 		gchar *pool_lib_path;
 		FrameCheckType frame_check;
 	} config;
@@ -186,6 +206,7 @@ GstElement *  v4l_gst_core_get_peer_element		   (GstElement *elem,
 							    const gchar *pad_name);
 gboolean      v4l_gst_core_init_pipeline		   (struct v4l_gst *priv,
 							    guint32 fourcc);
+gboolean      v4l_gst_core_setup_role			   (struct v4l_gst *priv);
 void	      v4l_gst_core_push_source_change_event	   (struct v4l_gst *priv);
 void	      v4l_gst_core_reset_cap_timestamp_state	   (struct v4l_gst *priv);
 void	      v4l_gst_core_set_pipeline_started		   (struct v4l_gst *priv,

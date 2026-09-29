@@ -70,6 +70,7 @@ parse_config_file(struct v4l_gst *priv)
 	gsize n_groups;
 	gint i;
 	guint n_pipelines = 0;
+	guint n_encode_pipelines = 0;
 
 	sys_conf_dirs = g_get_system_config_dirs();
 
@@ -165,10 +166,13 @@ parse_config_file(struct v4l_gst *priv)
 	/* [H264], [HEVC], etc... */
 	priv->config.pipelines = g_hash_table_new_full(g_str_hash, g_str_equal,
 						       g_free, g_free);
+	priv->config.encode_pipelines = g_hash_table_new_full(g_str_hash,
+							      g_str_equal,
+							      g_free, g_free);
 	groups = g_key_file_get_groups(conf_key, &n_groups);
 	GST_DEBUG("found %zu section in %s", n_groups, conf_name);
 	for (i = 0; i < n_groups; i++) {
-		gchar *pipeline_str;
+		gchar *pipeline_str, *encode_pipeline_str;
 
 		if (!g_strcmp0(groups[i], libv4l_gst_group))
 			continue;
@@ -178,30 +182,53 @@ parse_config_file(struct v4l_gst *priv)
 			continue;
 
 		GST_DEBUG("Parse section: [%s]", groups[i]);
+		err = NULL;
 		pipeline_str = g_key_file_get_string(conf_key, groups[i],
 						     "pipeline", &err);
 		if (err) {
-			GST_ERROR("GStreamer pipeline is not specified");
-			if (err) g_error_free(err);
+			g_error_free(err);
 			err = NULL;
+		}
+		encode_pipeline_str = g_key_file_get_string(conf_key, groups[i],
+							    "encode-pipeline",
+							    &err);
+		if (err) {
+			g_error_free(err);
+			err = NULL;
+		}
+
+		if (!pipeline_str && !encode_pipeline_str) {
+			GST_ERROR("Neither pipeline nor encode-pipeline "
+				  "is specified in section [%s]", groups[i]);
 			continue;
 		}
 
-		g_hash_table_insert(priv->config.pipelines,
-				    g_strdup(groups[i]),
-				    pipeline_str);
-		GST_DEBUG("enabled %s pipeline: %s", groups[i], pipeline_str);
-		n_pipelines++;
+		if (pipeline_str) {
+			g_hash_table_insert(priv->config.pipelines,
+					    g_strdup(groups[i]),
+					    pipeline_str);
+			GST_DEBUG("enabled %s decode pipeline: %s",
+				  groups[i], pipeline_str);
+			n_pipelines++;
+		}
+		if (encode_pipeline_str) {
+			g_hash_table_insert(priv->config.encode_pipelines,
+					    g_strdup(groups[i]),
+					    encode_pipeline_str);
+			GST_DEBUG("enabled %s encode pipeline: %s",
+				  groups[i], encode_pipeline_str);
+			n_encode_pipelines++;
+		}
 	}
 
 	g_strfreev(groups);
  free_key_file:
 	g_key_file_free(conf_key);
 
-	if (n_pipelines == 0)
+	if (n_pipelines == 0 && n_encode_pipelines == 0)
 		GST_ERROR("no pipeline!");
 
-	return n_pipelines > 0;
+	return (n_pipelines + n_encode_pipelines) > 0;
 }
 
 
@@ -431,30 +458,17 @@ fill_out_fmts_func(gpointer key, gpointer value, gpointer user_data)
 }
 
 
-static gboolean
-fill_config_video_format_out(struct v4l_gst *priv)
+static void
+fill_codec_fmts(GHashTable *pipelines, GArray *fmts)
 {
-	gint i;
-	gchar codecs[256] = {0};
-
-	g_array_set_size(priv->out.supported_fmts, 0);
-	g_hash_table_foreach(priv->config.pipelines,
+	g_hash_table_foreach(pipelines,
 			     fill_out_fmts_func,
-			     priv->out.supported_fmts);
-
-	for (i = 0; i < priv->out.supported_fmts->len; i++) {
-		struct fmt *fmts = (struct fmt*)priv->out.supported_fmts->data;
-		g_strlcat(codecs, fmts[i].desc, sizeof(codecs));
-		g_strlcat(codecs, " ", sizeof(codecs));
-	}
-	GST_DEBUG("supported codecs: %s", codecs);
-
-	return priv->out.supported_fmts->len > 0;
+			     fmts);
 }
 
 
 static void
-fill_config_video_format_cap(struct v4l_gst *priv)
+fill_raw_fmts(struct v4l_gst *priv, GArray *fmts)
 {
 	struct fmt color_fmt;
 
@@ -465,8 +479,74 @@ fill_config_video_format_cap(struct v4l_gst *priv)
 		color_fmt.fourcc = fourcc_from_string("NV12");
 		g_strlcpy(color_fmt.desc, "NV12", FMTDESC_NAME_LENGTH);
 	}
-	g_array_prepend_vals(priv->cap.supported_fmts,
-			     &color_fmt, 1);
+	g_array_append_vals(fmts, &color_fmt, 1);
+}
+
+
+static void
+debug_supported_fmts(const GArray *fmts)
+{
+	gint i;
+	gchar list[256] = {0};
+	const struct fmt *data = (const struct fmt*)fmts->data;
+
+	for (i = 0; i < fmts->len; i++) {
+		g_strlcat(list, data[i].desc, sizeof(list));
+		g_strlcat(list, " ", sizeof(list));
+	}
+	GST_DEBUG("supported formats: %s", list);
+}
+
+
+gboolean
+v4l_gst_core_setup_role(struct v4l_gst *priv)
+{
+	gboolean has_decode = g_hash_table_size(priv->config.pipelines) > 0;
+	gboolean has_encode =
+		g_hash_table_size(priv->config.encode_pipelines) > 0;
+
+	if (has_decode && !has_encode)
+		priv->role = V4L_GST_ROLE_DECODER;
+	else if (has_encode && !has_decode)
+		priv->role = V4L_GST_ROLE_ENCODER;
+	else
+		/* fixed by the first OUTPUT format (v4l-gst-fmt.c) */
+		priv->role = V4L_GST_ROLE_NONE;
+
+	g_array_set_size(priv->out.supported_fmts, 0);
+	g_array_set_size(priv->cap.supported_fmts, 0);
+
+	switch (priv->role) {
+	case V4L_GST_ROLE_DECODER:
+		priv->out.kind = V4L_GST_MEDIA_KIND_CODEC;
+		priv->cap.kind = V4L_GST_MEDIA_KIND_RAW;
+		fill_codec_fmts(priv->config.pipelines,
+				priv->out.supported_fmts);
+		fill_raw_fmts(priv, priv->cap.supported_fmts);
+		break;
+	case V4L_GST_ROLE_ENCODER:
+		priv->out.kind = V4L_GST_MEDIA_KIND_RAW;
+		priv->cap.kind = V4L_GST_MEDIA_KIND_CODEC;
+		fill_raw_fmts(priv, priv->out.supported_fmts);
+		fill_codec_fmts(priv->config.encode_pipelines,
+				priv->cap.supported_fmts);
+		break;
+	case V4L_GST_ROLE_NONE:
+		/* kind is set once the role is fixed */
+		fill_codec_fmts(priv->config.pipelines,
+				priv->out.supported_fmts);
+		fill_raw_fmts(priv, priv->out.supported_fmts);
+		fill_raw_fmts(priv, priv->cap.supported_fmts);
+		fill_codec_fmts(priv->config.encode_pipelines,
+				priv->cap.supported_fmts);
+		break;
+	}
+
+	debug_supported_fmts(priv->out.supported_fmts);
+	debug_supported_fmts(priv->cap.supported_fmts);
+
+	return priv->out.supported_fmts->len > 0 &&
+		priv->cap.supported_fmts->len > 0;
 }
 
 
@@ -739,10 +819,17 @@ gboolean
 v4l_gst_core_init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 {
 	gchar fourcc_str[5];
+	GHashTable *pipelines;
 	const gchar *pipeline;
 
 	fourcc_to_string(fourcc, fourcc_str);
-	pipeline = g_hash_table_lookup(priv->config.pipelines, fourcc_str);
+
+	if (priv->role == V4L_GST_ROLE_ENCODER)
+		pipelines = priv->config.encode_pipelines;
+	else
+		pipelines = priv->config.pipelines;
+
+	pipeline = g_hash_table_lookup(pipelines, fourcc_str);
 
 	if (pipeline) {
 		GST_DEBUG("create %s pipeline: %s", fourcc_str, pipeline);
@@ -760,7 +847,10 @@ v4l_gst_core_init_pipeline(struct v4l_gst *priv, guint32 fourcc)
 	if (!init_buffer_pool(priv))
 		goto error;
 
-	priv->out.fmt.pixelformat = fourcc;
+	if (priv->role == V4L_GST_ROLE_ENCODER)
+		priv->cap.fmt.pixelformat = fourcc;
+	else
+		priv->out.fmt.pixelformat = fourcc;
 
 	return TRUE;
 
@@ -837,24 +927,16 @@ v4l_gst_init(int fd)
 		goto error;
 	}
 
-	/*
-	 * Only the M2M decoder role is supported at the moment:
-	 * OUTPUT carries a compressed bitstream and CAPTURE
-	 * carries decoded raw frames.
-	 */
 	priv->out.buf_type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-	priv->out.kind = V4L_GST_MEDIA_KIND_CODEC;
 	priv->cap.buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-	priv->cap.kind = V4L_GST_MEDIA_KIND_RAW;
 
 	priv->out.supported_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 	priv->cap.supported_fmts = g_array_new(FALSE, TRUE, sizeof(struct fmt));
 
-	if (!fill_config_video_format_out(priv)) {
-		GST_ERROR("Failed to fill in supported video format");
+	if (!v4l_gst_core_setup_role(priv)) {
+		GST_ERROR("Failed to set up the M2M role");
 		goto error;
 	}
-	fill_config_video_format_cap(priv);
 
 	g_mutex_init(&priv->v4l2events.mutex);
 	priv->v4l2events.subscribed = 0;
@@ -869,20 +951,28 @@ v4l_gst_init(int fd)
 	g_mutex_init(&priv->dev_lock);
 
 	if (priv->config.fixed_pipeline) {
-		if (!v4l_gst_core_init_pipeline(priv, priv->config.fixed_pipeline))
+		if (priv->role == V4L_GST_ROLE_NONE) {
+			GST_WARNING("fixed-pipeline is ignored when both "
+				    "pipeline and encode-pipeline are "
+				    "configured");
+		} else if (!v4l_gst_core_init_pipeline(priv,
+						priv->config.fixed_pipeline)) {
 			goto error;
+		}
 	}
 
 	GST_DEBUG("Initialized gst backend");
 	return priv;
 
- error:
+  error:
 	if (priv->out.supported_fmts)
 		g_array_free(priv->out.supported_fmts, TRUE);
 	if (priv->cap.supported_fmts)
 		g_array_free(priv->cap.supported_fmts, TRUE);
 	if (priv->config.pipelines)
 		g_hash_table_destroy(priv->config.pipelines);
+	if (priv->config.encode_pipelines)
+		g_hash_table_destroy(priv->config.encode_pipelines);
 	g_free(priv->config.pool_lib_path);
 	if (priv->event_state)
 		delete_event_state(priv->event_state);
@@ -953,6 +1043,8 @@ v4l_gst_deinit(struct v4l_gst *priv)
 
 	if (priv->config.pipelines)
 		g_hash_table_destroy(priv->config.pipelines);
+	if (priv->config.encode_pipelines)
+		g_hash_table_destroy(priv->config.encode_pipelines);
 
 	g_free(priv->config.pool_lib_path);
 

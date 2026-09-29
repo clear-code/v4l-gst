@@ -97,12 +97,34 @@ v4l_gst_get_ext_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_c
 }
 
 
+/*
+ * Whether a pipeline for the given codec fourcc is enabled for the current
+ * role. While the role is not fixed yet (both decode and encode pipelines
+ * are configured), a codec counts as enabled when it has either pipeline.
+ */
+static gboolean
+codec_pipeline_enabled(struct v4l_gst *priv, guint32 fourcc)
+{
+	gchar fourcc_str[5];
+
+	fourcc_to_string(fourcc, fourcc_str);
+
+	if (priv->role != V4L_GST_ROLE_ENCODER &&
+	    g_hash_table_lookup(priv->config.pipelines, fourcc_str))
+		return TRUE;
+
+	if (priv->role != V4L_GST_ROLE_DECODER &&
+	    g_hash_table_lookup(priv->config.encode_pipelines, fourcc_str))
+		return TRUE;
+
+	return FALSE;
+}
+
+
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
 int
 v4l_gst_queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 {
-	gchar fourcc_str[5];
-
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
 	if (vidioc_features && strstr(vidioc_features, "VIDIOC_QUERYCTRL")) {
@@ -118,8 +140,7 @@ v4l_gst_queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 
 	switch (query_ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		fourcc_to_string(V4L2_PIX_FMT_H264, fourcc_str);
-		if (g_hash_table_lookup(priv->config.pipelines, fourcc_str)) {
+		if (codec_pipeline_enabled(priv, V4L2_PIX_FMT_H264)) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10;
 		} else {
@@ -129,8 +150,7 @@ v4l_gst_queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 		}
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:
-		fourcc_to_string(V4L2_PIX_FMT_HEVC, fourcc_str);
-		if (g_hash_table_lookup(priv->config.pipelines, fourcc_str)) {
+		if (codec_pipeline_enabled(priv, V4L2_PIX_FMT_HEVC)) {
 			query_ctrl->minimum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
 			query_ctrl->maximum = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
 		} else {

@@ -125,7 +125,32 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
-	if (priv->pipeline) {
+	if (priv->role == V4L_GST_ROLE_NONE) {
+		/* Fix the role from the media kind of the OUTPUT format:
+		   a codec selects the decoder, a raw format selects the
+		   encoder. The format is guaranteed to be supported by
+		   the check above. */
+		if (g_hash_table_lookup(priv->config.pipelines,
+					fourcc_str)) {
+			priv->role = V4L_GST_ROLE_DECODER;
+			priv->out.kind = V4L_GST_MEDIA_KIND_CODEC;
+			priv->cap.kind = V4L_GST_MEDIA_KIND_RAW;
+		} else {
+			priv->role = V4L_GST_ROLE_ENCODER;
+			priv->out.kind = V4L_GST_MEDIA_KIND_RAW;
+			priv->cap.kind = V4L_GST_MEDIA_KIND_CODEC;
+		}
+		GST_INFO("role fixed from OUTPUT format %s: %s",
+			 fourcc_str,
+			 priv->role == V4L_GST_ROLE_DECODER ?
+			 "decoder" : "encoder");
+	}
+
+	if (priv->role == V4L_GST_ROLE_ENCODER) {
+		/* The OUTPUT format does not select the GStreamer pipeline.
+		   The encoder pipeline is created when the CAPTURE codec
+		   format is set. */
+	} else if (priv->pipeline) {
 		if (priv->out.fmt.pixelformat == pix_fmt->pixelformat) {
 			GST_INFO("Same pixelformat with current: %s",
 				 fourcc_str);
@@ -147,7 +172,8 @@ set_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	priv->out.fmt = *pix_fmt;
 
-	set_params_as_encoded_stream(pix_fmt);
+	if (priv->role != V4L_GST_ROLE_ENCODER)
+		set_params_as_encoded_stream(pix_fmt);
 
 	if (!priv->cap.fmt.pixelformat && cap_fmts->len > 0)
 		priv->cap.fmt.pixelformat
@@ -179,12 +205,24 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 	pix_fmt = &fmt->fmt.pix_mp;
 
+	if (priv->role == V4L_GST_ROLE_NONE) {
+		GST_ERROR("The role is not fixed yet; set the OUTPUT format "
+			  "first");
+		errno = EINVAL;
+		return -1;
+	}
+
 	if (!is_pix_fmt_supported((struct fmt*)priv->cap.supported_fmts->data,
 				  priv->cap.supported_fmts->len,
 				  pix_fmt->pixelformat)) {
 		GST_ERROR("Unsupported pixelformat on CAPTURE");
 		errno = EINVAL;
 		return -1;
+	}
+
+	if (priv->role == V4L_GST_ROLE_ENCODER && !priv->pipeline) {
+		if (!v4l_gst_core_init_pipeline(priv, pix_fmt->pixelformat))
+			return -1;
 	}
 
 	GST_OBJECT_LOCK(priv->pipeline);
@@ -301,7 +339,8 @@ v4l_gst_get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 		g_mutex_lock(&priv->dev_lock);
 		*pix_fmt = priv->out.fmt;
 		g_mutex_unlock(&priv->dev_lock);
-		set_params_as_encoded_stream(pix_fmt);
+		if (priv->role != V4L_GST_ROLE_ENCODER)
+			set_params_as_encoded_stream(pix_fmt);
 		ret = 0;
 	} else if (fmt->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		ret = get_fmt_ioctl_cap(priv, pix_fmt);
@@ -350,6 +389,17 @@ v4l_gst_enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 		  sizeof(desc->description));
 	memset(desc->reserved, 0, sizeof(desc->reserved));
 	fourcc_to_string(desc->pixelformat, fourcc_str);
+
+	/* Flag each entry by its media kind: codec entries are compressed. */
+	if (desc->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
+		desc->flags = g_hash_table_lookup(priv->config.pipelines,
+						  fourcc_str) ?
+			V4L2_FMT_FLAG_COMPRESSED : 0;
+	else
+		desc->flags = g_hash_table_lookup(priv->config.encode_pipelines,
+						  fourcc_str) ?
+			V4L2_FMT_FLAG_COMPRESSED : 0;
+
 	GST_DEBUG("  description: %s pixelformat: %s (0x%x)",
 		  desc->description, fourcc_str, desc->pixelformat);
 
@@ -479,7 +529,8 @@ try_fmt_ioctl_out(struct v4l_gst *priv, struct v4l2_format *format)
 		return -1;
 	}
 
-	set_params_as_encoded_stream(pix_fmt);
+	if (priv->role != V4L_GST_ROLE_ENCODER)
+		set_params_as_encoded_stream(pix_fmt);
 
 	return 0;
 }
