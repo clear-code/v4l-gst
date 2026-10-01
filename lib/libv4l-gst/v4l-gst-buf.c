@@ -184,6 +184,16 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		return -1;
 	}
 
+	/* Push the OUTPUT caps to the appsrc before the first buffer so the
+	   base source can negotiate its caps before the first buffer is
+	   pushed. Otherwise the caps sit behind the buffers in the appsrc
+	   queue and the first push fails with NOT_NEGOTIATED. */
+	if (!priv->out_caps_set) {
+		if (!v4l_gst_pipeline_set_out_format(priv))
+			return -1;
+		priv->out_caps_set = TRUE;
+	}
+
 	GST_TRACE("queue index=%d buffer=%p", v4l2buf->index,
 		  priv->out.buffers[v4l2buf->index].gstbuf);
 
@@ -485,10 +495,15 @@ dequeue_cap_buffer(struct v4l_gst *priv)
 
 	g_mutex_lock(&priv->queue_mutex);
 
-	/* Cache 1 buffer to detect EOS */
-	len = g_queue_get_length(queue);
-	if (priv->eos_state != EOS_GOT && len == 1)
-		goto unlock;
+	/* Cache 1 buffer to detect EOS. The encoder emits a finite set of
+	   encoded buffers and reports end of stream through the appsrc EOS
+	   event, so holding back the last buffer would stall the client
+	   forever; always dequeue it instead. */
+	if (priv->cap.kind != V4L_GST_MEDIA_KIND_CODEC) {
+		len = g_queue_get_length(queue);
+		if (priv->eos_state != EOS_GOT && len == 1)
+			goto unlock;
+	}
 
 	if (priv->is_non_blocking)
 		gstbuf = dequeue_non_blocking(queue);
@@ -745,8 +760,14 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 	v4l2buf->index = index;
 
-	for (i = 0; i < priv->cap.fmt.num_planes; i++)
-		bytesused[i] = priv->cap.fmt.plane_fmt[i].sizeimage;
+	if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		/* For an encoded stream, the amount of valid data is the
+		   actual size of the GStreamer buffer. */
+		bytesused[0] = gst_buffer_get_size(gstbuf);
+	} else {
+		for (i = 0; i < priv->cap.fmt.num_planes; i++)
+			bytesused[i] = priv->cap.fmt.plane_fmt[i].sizeimage;
+	}
 
 	if (priv->cap.buffers[index].state == V4L_GST_BUFFER_DEQUEUED) {
 		/* It might occur when a buffer is unexpectedly queued
@@ -1158,7 +1179,11 @@ reqbuf_ioctl_out(struct v4l_gst *priv,
 		}
 	}
 
-	caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
+	if (priv->out.kind == V4L_GST_MEDIA_KIND_RAW)
+		caps = v4l_gst_pipeline_get_raw_caps_from_fmt(&priv->out.fmt);
+	else
+		caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(
+				priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		ret = -1;
@@ -1313,35 +1338,47 @@ create_cap_buffers_list(struct v4l_gst *priv)
 		return 0;
 	}
 
-	if (!first_gstbuf->pool) {
-		GST_ERROR("Cannot handle buffers not belonging to "
-			  "a bufferpool");
-		errno = EINVAL;
-		return 0;
-	}
+	if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		/* Encoded stream buffers are allocated dynamically by the
+		   encoder and do not belong to a buffer pool, so use the
+		   number of buffers requested via VIDIOC_REQBUF. The frame
+		   parameters were already fixed by VIDIOC_S_FMT. */
+		actual_max_buffers = priv->cap.buffers_num;
+	} else {
+		if (!first_gstbuf->pool) {
+			GST_ERROR("Cannot handle buffers not belonging to "
+				  "a bufferpool");
+			errno = EINVAL;
+			return 0;
+		}
 
-	if (priv->cap.pool != first_gstbuf->pool) {
-		GST_DEBUG("The buffer pool we prepared is not used by "
-			  "the pipeline, so replace it with the pool that is "
-			  "actually used");
-		gst_object_unref(priv->cap.pool);
-		priv->cap.pool = gst_object_ref(first_gstbuf->pool);
-	}
+		if (priv->cap.pool != first_gstbuf->pool) {
+			GST_DEBUG("The buffer pool we prepared is not used by "
+				  "the pipeline, so replace it with the pool "
+				  "that is actually used");
+			gst_object_unref(priv->cap.pool);
+			priv->cap.pool = gst_object_ref(first_gstbuf->pool);
+		}
 
-	/* Confirm the number of buffers actually set to the buffer pool. */
-	v4l_gst_pipeline_get_buffer_pool_params(priv->cap.pool, NULL, NULL, NULL,
-			       &actual_max_buffers);
-	if (actual_max_buffers == 0) {
-		GST_ERROR("Cannot handle the unlimited amount of buffers");
-		errno = EINVAL;
-		return 0;
-	}
+		/* Confirm the number of buffers actually set to the buffer
+		   pool. */
+		v4l_gst_pipeline_get_buffer_pool_params(priv->cap.pool, NULL,
+				NULL, NULL, &actual_max_buffers);
+		if (actual_max_buffers == 0) {
+			GST_ERROR("Cannot handle the unlimited amount of "
+				  "buffers");
+			errno = EINVAL;
+			return 0;
+		}
 
-	if (!retrieve_cap_frame_info(priv->cap.pool, first_gstbuf,
-				     &priv->cap.fmt)) {
-		GST_ERROR("Failed to retrieve frame info on CAPTURE");
-		errno = EINVAL;
-		return 0;
+		/* Raw stream buffers carry a GstVideoMeta, so retrieve the
+		   frame parameters from it. */
+		if (!retrieve_cap_frame_info(priv->cap.pool, first_gstbuf,
+					     &priv->cap.fmt)) {
+			GST_ERROR("Failed to retrieve frame info on CAPTURE");
+			errno = EINVAL;
+			return 0;
+		}
 	}
 
 	/* We wait for buffers from appsink to be collected for
@@ -1474,7 +1511,8 @@ streamon_ioctl_out(struct v4l_gst *priv)
 	g_mutex_lock(&priv->dev_lock);
 
 	if (state == GST_STATE_NULL) {
-		if (!v4l_gst_pipeline_set_out_format(priv))
+		if (!priv->out_caps_set &&
+		    !v4l_gst_pipeline_set_out_format(priv))
 			return -1;
 		if (!v4l_gst_pipeline_set_cap_format(priv))
 			return -1;
@@ -1646,17 +1684,23 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 		return MAP_FAILED;
 	}
 
-	if (!v4l_gst_pipeline_get_raw_video_params(priv->cap.pool,
-				  priv->cap.buffers[index].gstbuf,
-				  NULL, &meta)) {
-		GST_ERROR("Failed to get video meta data");
-		errno = EINVAL;
-		gst_buffer_unmap(priv->cap.buffers[index].gstbuf,
-				 &priv->cap.buffers[index].info);
-		return MAP_FAILED;
-	}
+	if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		/* An encoded stream buffer holds the bitstream at the start
+		   of the mapped region, so there is no video meta to consult. */
+		data = info.data;
+	} else {
+		if (!v4l_gst_pipeline_get_raw_video_params(priv->cap.pool,
+							  priv->cap.buffers[index].gstbuf,
+							  NULL, &meta)) {
+			GST_ERROR("Failed to get video meta data");
+			errno = EINVAL;
+			gst_buffer_unmap(priv->cap.buffers[index].gstbuf,
+					 &info);
+			return MAP_FAILED;
+		}
 
-	data = info.data + meta->offset[plane];
+		data = info.data + meta->offset[plane];
+	}
 
 	gst_buffer_unmap(priv->cap.buffers[index].gstbuf, &info);
 

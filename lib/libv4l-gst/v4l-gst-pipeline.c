@@ -186,6 +186,34 @@ pad_probe_query(GstPad *pad, GstPadProbeInfo *probe_info, gpointer user_data)
 			return GST_PAD_PROBE_OK;
 		}
 
+		if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+			/* Encoded stream on CAPTURE: the caps are codec caps
+			   which do not carry an allocatable size, so use the
+			   sizeimage specified via VIDIOC_S_FMT on CAPTURE. No
+			   video meta or alignment is required for an encoded
+			   stream. */
+			guint buf_size = priv->cap.fmt.plane_fmt[0].sizeimage;
+
+			g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+			v4l_gst_core_push_source_change_event(priv);
+
+			set_event(priv->event_state, POLLOUT);
+
+			if (wait_for_cap_reqbuf_invocation(priv)) {
+				v4l_gst_pipeline_set_buffer_pool_params(
+						priv->cap.pool, caps,
+						buf_size, 0,
+						priv->cap.buffers_num, NULL);
+				gst_query_add_allocation_pool(query,
+						priv->cap.pool, buf_size,
+						0, priv->cap.buffers_num);
+			} else {
+				GST_WARNING("Failed to wait VIDIOC_REQBUF.");
+			}
+
+			return GST_PAD_PROBE_OK;
+		}
+
 		if (!gst_video_info_from_caps(&info, caps)) {
 			GST_ERROR("Failed to get video info");
 			return GST_PAD_PROBE_OK;
@@ -410,6 +438,13 @@ v4l_gst_pipeline_setup_app_elements(struct v4l_gst *priv)
 	   The amount of buffers is managed by the buffer pool. */
 	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
 
+	/* Video frames are timestamped in time, not bytes. The appsrc
+	   "format" property drives the segment format (gst_app_src_start
+	   copies it into the base src), and do-timestamp assigns PTS/DTS
+	   from the caps framerate since the wrapped buffers carry no PTS. */
+	g_object_set(G_OBJECT(priv->appsrc), "format", GST_FORMAT_TIME,
+		     "do-timestamp", TRUE, NULL);
+
 	gst_base_sink_set_sync(GST_BASE_SINK(priv->appsink), FALSE);
 
 	priv->appsink_cb.new_sample = appsink_callback_new_sample;
@@ -487,6 +522,34 @@ v4l_gst_pipeline_get_codec_caps_from_fourcc(guint fourcc)
 }
 
 
+GstCaps *
+v4l_gst_pipeline_get_raw_caps_from_fmt(struct v4l2_pix_format_mplane *fmt)
+{
+	GstVideoFormat gst_fmt;
+	const gchar *fmt_str;
+
+	gst_fmt = fourcc_to_gst_video_format(fmt->pixelformat);
+	if (gst_fmt == GST_VIDEO_FORMAT_UNKNOWN) {
+		gchar fourcc_str[5];
+		fourcc_to_string(fmt->pixelformat, fourcc_str);
+		GST_ERROR("Failed to convert from fourcc to gst video format: %s (0x%x)",
+			  fourcc_str, fmt->pixelformat);
+		return NULL;
+	}
+
+	fmt_str = gst_video_format_to_string(gst_fmt);
+
+	/* Provide a framerate so the appsrc can auto-timestamp the
+	   wrapped input buffers, which carry no PTS of their own. */
+	return gst_caps_new_simple("video/x-raw",
+				   "format", G_TYPE_STRING, fmt_str,
+				   "width", G_TYPE_INT, (gint) fmt->width,
+				   "height", G_TYPE_INT, (gint) fmt->height,
+				   "framerate", GST_TYPE_FRACTION, 30, 1,
+				   NULL);
+}
+
+
 int
 v4l_gst_pipeline_flush(struct v4l_gst *priv)
 {
@@ -554,6 +617,10 @@ v4l_gst_pipeline_stop(struct v4l_gst *priv)
 
 	g_atomic_int_set(&priv->cap.fmt_acquirable, 0);
 
+	/* The appsrc queue is flushed when the pipeline goes to NULL, so the
+	   OUTPUT caps must be re-pushed before the next first buffer. */
+	priv->out_caps_set = FALSE;
+
 	for (i = 0; i < priv->cap.buffers_num; i++) {
 		if (priv->cap.buffers[i].state ==
 		    V4L_GST_BUFFER_DEQUEUED) {
@@ -592,7 +659,11 @@ v4l_gst_pipeline_set_out_format(struct v4l_gst *priv)
 {
 	GstCaps *caps;
 
-	caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(priv->out.fmt.pixelformat);
+	if (priv->out.kind == V4L_GST_MEDIA_KIND_RAW)
+		caps = v4l_gst_pipeline_get_raw_caps_from_fmt(&priv->out.fmt);
+	else
+		caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(
+				priv->out.fmt.pixelformat);
 	if (!caps) {
 		errno = EINVAL;
 		return FALSE;
@@ -610,21 +681,34 @@ v4l_gst_pipeline_set_cap_format(struct v4l_gst *priv)
 {
 	GstElement *peer_elem;
 	GstCaps *caps;
-	GstVideoFormat fmt;
 	gboolean ret;
 
-	fmt = fourcc_to_gst_video_format(priv->cap.fmt.pixelformat);
-	if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
-		gchar fourcc_str[5];
-		fourcc_to_string(priv->cap.fmt.pixelformat, fourcc_str);
-		GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
-			  fourcc_str, priv->cap.fmt.pixelformat);
+	if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		caps = v4l_gst_pipeline_get_codec_caps_from_fourcc(
+				priv->cap.fmt.pixelformat);
+	} else {
+		GstVideoFormat fmt;
+
+		fmt = fourcc_to_gst_video_format(priv->cap.fmt.pixelformat);
+		if (fmt == GST_VIDEO_FORMAT_UNKNOWN) {
+			gchar fourcc_str[5];
+			fourcc_to_string(priv->cap.fmt.pixelformat, fourcc_str);
+			GST_ERROR("Invalid format on CAPTURE: %s (0x%x)",
+				  fourcc_str, priv->cap.fmt.pixelformat);
+			errno = EINVAL;
+			return FALSE;
+		}
+
+		caps = gst_caps_new_simple("video/x-raw", "format",
+					   G_TYPE_STRING,
+					   gst_video_format_to_string(fmt),
+					   NULL);
+	}
+
+	if (!caps) {
 		errno = EINVAL;
 		return FALSE;
 	}
-
-	caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING,
-				   gst_video_format_to_string(fmt), NULL);
 
 	peer_elem = v4l_gst_core_get_peer_element(priv->appsink, "sink");
 	if (!relink_elements_with_caps_filtered(peer_elem, priv->appsink,

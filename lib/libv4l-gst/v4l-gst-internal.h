@@ -160,6 +160,11 @@ struct v4l_gst {
 
 	gboolean is_pipeline_started;
 
+	/* The OUTPUT caps have been pushed to the appsrc before any buffer so
+	   that the base source can negotiate before the first buffer is pushed.
+	   Reset when the pipeline is stopped (the appsrc queue is flushed). */
+	gboolean out_caps_set;
+
 	GstBuffer *eos_gstbuf;
 	EOSState eos_state;
 	GstClockTime last_cap_pts;
@@ -214,6 +219,7 @@ void	      v4l_gst_core_set_pipeline_started		   (struct v4l_gst *priv,
 
 /* pipeline */
 GstCaps *     v4l_gst_pipeline_get_codec_caps_from_fourcc  (guint fourcc);
+GstCaps *     v4l_gst_pipeline_get_raw_caps_from_fmt	   (struct v4l2_pix_format_mplane *fmt);
 gboolean      v4l_gst_pipeline_get_raw_video_params	   (GstBufferPool *pool,
 							    GstBuffer *gstbuf,
 							    GstVideoInfo *info,

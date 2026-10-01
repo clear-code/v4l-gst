@@ -92,6 +92,42 @@ prepare_dual_role_backend_fixture(struct v4l_gst *priv)
 	priv->out.cnt = INPUT_BUFFERING_CNT;
 }
 
+/*
+ * Reconfigure the backend into an encoder role backed by a real x264enc
+ * GStreamer pipeline, so that OUTPUT raw frames are encoded to an H264
+ * stream on CAPTURE. The "identity" placeholder pipeline created by
+ * prepare_format_backend_fixture() is dropped so that the encoder pipeline
+ * is created (via VIDIOC_S_FMT on CAPTURE) with a real encoder.
+ */
+void
+prepare_x264enc_backend_fixture(struct v4l_gst *priv)
+{
+	if (priv->pipeline) {
+		gst_object_unref(priv->pipeline);
+		priv->pipeline = NULL;
+	}
+
+	g_hash_table_remove(priv->config.pipelines, "H264");
+	/* Zero-latency tuning disables lookahead/bframes so that each input
+	   frame produces an output frame immediately, which the CAPTURE
+	   buffer flow depends on. */
+	g_hash_table_insert(priv->config.encode_pipelines, g_strdup("H264"),
+			    g_strdup("x264enc tune=zerolatency "
+				     "speed-preset=ultrafast"));
+	v4l_gst_core_setup_role(priv);
+
+	priv->out.fmt.pixelformat = V4L2_PIX_FMT_NV12;
+	priv->out.fmt.width = 640;
+	priv->out.fmt.height = 480;
+	priv->out.fmt.num_planes = 1;
+	priv->out.fmt.plane_fmt[0].bytesperline = 640;
+	priv->out.fmt.plane_fmt[0].sizeimage = 640 * 480 * 3 / 2;
+	priv->cap.fmt.pixelformat = V4L2_PIX_FMT_H264;
+	priv->cap.fmt.plane_fmt[0].sizeimage = 1024 * 1024;
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+	priv->out.cnt = INPUT_BUFFERING_CNT;
+}
+
 enum v4l_gst_role
 get_backend_role(struct v4l_gst *priv)
 {

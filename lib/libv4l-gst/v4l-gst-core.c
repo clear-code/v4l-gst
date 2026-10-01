@@ -565,32 +565,102 @@ get_supported_video_format_out(struct v4l_gst *priv)
 		return FALSE;
 	}
 
-	structure = gst_caps_get_structure(caps, 0);
-	mime = gst_structure_get_name(structure);
+	if (priv->out.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		/* Decoder: OUTPUT carries a codec. Only a single codec is
+		   negotiated by the pipeline. */
+		structure = gst_caps_get_structure(caps, 0);
+		mime = gst_structure_get_name(structure);
 
-	if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
-		fourcc = V4L2_PIX_FMT_H264;
-	} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
-		fourcc = V4L2_PIX_FMT_HEVC;
-	} else {
-		GST_ERROR("Unsupported codec : %s", mime);
+		if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
+			fourcc = V4L2_PIX_FMT_H264;
+		} else if (g_strcmp0(mime, GST_VIDEO_CODEC_MIME_HEVC) == 0) {
+			fourcc = V4L2_PIX_FMT_HEVC;
+		} else {
+			GST_ERROR("Unsupported codec : %s", mime);
+			gst_caps_unref(caps);
+			g_array_set_size(priv->out.supported_fmts, 0);
+			return FALSE;
+		}
+		GST_DEBUG("out supported codec : %s", mime);
+
+		g_array_set_size(priv->out.supported_fmts, 1);
+		fmt = (struct fmt*)priv->out.supported_fmts->data;
+
+		fmt->fourcc = fourcc;
+		if(fourcc == V4L2_PIX_FMT_H264)
+			g_strlcpy(fmt->desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
+		else if (fourcc == V4L2_PIX_FMT_HEVC)
+			g_strlcpy(fmt->desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
 		gst_caps_unref(caps);
-		g_array_set_size(priv->out.supported_fmts, 0);
-		return FALSE;
+
+		return TRUE;
 	}
-	GST_DEBUG("out supported codec : %s", mime);
 
-	g_array_set_size(priv->out.supported_fmts, 1);
-	fmt = (struct fmt*)priv->out.supported_fmts->data;
+	/* Encoder: OUTPUT carries raw video. Parse the raw format list from
+	   the caps and map each to a V4L2 fourcc. */
+	{
+		guint structs;
+		guint i, j;
 
-	fmt->fourcc = fourcc;
-	if(fourcc == V4L2_PIX_FMT_H264)
-		g_strlcpy(fmt->desc, "V4L2_PIX_FMT_H264", FMTDESC_NAME_LENGTH);
-	else if (fourcc == V4L2_PIX_FMT_HEVC)
-		g_strlcpy(fmt->desc, "V4L2_PIX_FMT_HEVC", FMTDESC_NAME_LENGTH);
-	gst_caps_unref(caps);
+		structs = gst_caps_get_size(caps);
 
-	return TRUE;
+		for (j = 0; j < structs; j++) {
+			gint num_out_formats;
+			const GValue *val, *list_val;
+			const gchar *fmt_str;
+			GstVideoFormat gst_fmt;
+			struct fmt color_fmt;
+
+			structure = gst_caps_get_structure(caps, j);
+			val = gst_structure_get_value(structure, "format");
+			if (!val)
+				continue;
+
+			num_out_formats = GST_VALUE_HOLDS_LIST(val) ?
+				gst_value_list_get_size(val) : 1;
+
+			for (i = 0; i < num_out_formats; i++) {
+				list_val = GST_VALUE_HOLDS_LIST(val) ?
+					gst_value_list_get_value(val, i) : val;
+				fmt_str = g_value_get_string(list_val);
+
+				gst_fmt = gst_video_format_from_string(fmt_str);
+				if (gst_fmt == GST_VIDEO_FORMAT_UNKNOWN) {
+					GST_ERROR("Unknown video format : %s",
+						  fmt_str);
+					continue;
+				}
+
+				color_fmt.fourcc =
+					fourcc_from_gst_video_format(gst_fmt);
+				if (color_fmt.fourcc == 0) {
+					GST_DEBUG("Failed to convert video "
+						  "format from gst to v4l2 : %s",
+						  fmt_str);
+					continue;
+				}
+
+				GST_DEBUG("out supported video format : %s",
+					  fmt_str);
+				g_strlcpy(color_fmt.desc, fmt_str,
+					   FMTDESC_NAME_LENGTH);
+				g_array_append_vals(priv->out.supported_fmts,
+						    &color_fmt, 1);
+			}
+		}
+
+		gst_caps_unref(caps);
+
+		if (priv->out.supported_fmts->len == 0) {
+			GST_ERROR("Failed to get video formats from caps");
+			return FALSE;
+		}
+
+		GST_DEBUG("The total number of out supported video format : %d",
+			  priv->out.supported_fmts->len);
+
+		return TRUE;
+	}
 }
 
 
@@ -616,6 +686,43 @@ get_supported_video_format_cap(struct v4l_gst *priv)
 	if (!caps) {
 		GST_ERROR("Failed to get video format for CAPTURE");
 		return FALSE;
+	}
+
+	if (priv->cap.kind == V4L_GST_MEDIA_KIND_CODEC) {
+		/* Encoder: CAPTURE carries a codec. A single codec is
+		   negotiated by the pipeline, so map its mime to a fourcc. */
+		GstStructure *codec_structure;
+		const gchar *codec_mime;
+		guint codec_fourcc;
+		struct fmt *codec_fmt;
+
+		codec_structure = gst_caps_get_structure(caps, 0);
+		codec_mime = gst_structure_get_name(codec_structure);
+
+		if (g_strcmp0(codec_mime, GST_VIDEO_CODEC_MIME_H264) == 0) {
+			codec_fourcc = V4L2_PIX_FMT_H264;
+		} else if (g_strcmp0(codec_mime, GST_VIDEO_CODEC_MIME_HEVC) ==
+			   0) {
+			codec_fourcc = V4L2_PIX_FMT_HEVC;
+		} else {
+			GST_ERROR("Unsupported codec : %s", codec_mime);
+			gst_caps_unref(caps);
+			return FALSE;
+		}
+		GST_DEBUG("cap supported codec : %s", codec_mime);
+
+		g_array_set_size(priv->cap.supported_fmts, 1);
+		codec_fmt = (struct fmt*)priv->cap.supported_fmts->data;
+		codec_fmt->fourcc = codec_fourcc;
+		if (codec_fourcc == V4L2_PIX_FMT_H264)
+			g_strlcpy(codec_fmt->desc, "V4L2_PIX_FMT_H264",
+				  FMTDESC_NAME_LENGTH);
+		else
+			g_strlcpy(codec_fmt->desc, "V4L2_PIX_FMT_HEVC",
+				  FMTDESC_NAME_LENGTH);
+		gst_caps_unref(caps);
+
+		return TRUE;
 	}
 
 	/* We treat GST_CAPS_ANY as all video formats support. */

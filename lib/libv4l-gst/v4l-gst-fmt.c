@@ -220,13 +220,40 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 		return -1;
 	}
 
+	if (priv->role == V4L_GST_ROLE_ENCODER &&
+	    pix_fmt->plane_fmt[0].sizeimage == 0) {
+		GST_ERROR("sizeimage field is not specified on CAPTURE");
+		errno = EINVAL;
+		return -1;
+	}
+
 	if (priv->role == V4L_GST_ROLE_ENCODER && !priv->pipeline) {
 		if (!v4l_gst_core_init_pipeline(priv, pix_fmt->pixelformat))
 			return -1;
 	}
 
 	GST_OBJECT_LOCK(priv->pipeline);
-	if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
+	if (priv->role == V4L_GST_ROLE_ENCODER) {
+		/* Encoded stream on CAPTURE: the stream size is given by the
+		   caller via sizeimage, so store it and mark the format as an
+		   encoded stream. */
+		if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
+			set_params_as_encoded_stream(&priv->cap.fmt);
+			priv->cap.fmt.pixelformat = pix_fmt->pixelformat;
+			priv->cap.fmt.plane_fmt[0].sizeimage =
+				pix_fmt->plane_fmt[0].sizeimage;
+		} else if (priv->cap.fmt.pixelformat !=
+			   pix_fmt->pixelformat) {
+			gchar fourcc_str[5];
+			fourcc_to_string(pix_fmt->pixelformat, fourcc_str);
+			GST_ERROR("Changing pixel format during playing isn't "
+				  "supported: pixelformat: %s (0x%x)",
+				  fourcc_str, pix_fmt->pixelformat);
+			errno = EBUSY;
+			GST_OBJECT_UNLOCK(priv->pipeline);
+			return -1;
+		}
+	} else if (GST_STATE(priv->pipeline) == GST_STATE_NULL) {
 		priv->cap.fmt.pixelformat = pix_fmt->pixelformat;
 		v4l_gst_fmt_init_decoded_frame_params(pix_fmt);
 	} else if (priv->cap.fmt.width != pix_fmt->width ||
@@ -240,6 +267,7 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 			  pix_fmt->width, pix_fmt->height,
 			  fourcc_str, pix_fmt->pixelformat);
 		errno = EBUSY;
+		GST_OBJECT_UNLOCK(priv->pipeline);
 		return -1;
 	}
 	GST_OBJECT_UNLOCK(priv->pipeline);

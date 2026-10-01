@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <glib/gstdio.h>
 #include <libv4l-plugin.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include "utils.h"
@@ -1082,6 +1083,7 @@ test_encode_only_set_fmt_capture_accepts_codec(void)
 		.ret = 0,
 		.error_number = 0,
 		.pixelformat = V4L2_PIX_FMT_H264,
+		.sizeimage = 1024,
 	};
 	struct pix_format_result actual;
 	const gchar *expected_string;
@@ -1351,4 +1353,172 @@ test_dual_set_fmt_capture_rejected_before_role_fixed(void)
 
 	assert_equal_result_strings(expected_string, actual_string);
 	assert_role(V4L_GST_ROLE_NONE);
+}
+
+static void
+fill_nv12_frame(void *data, guint32 size)
+{
+	guint8 *p = data;
+	const guint32 y_size = 640 * 480;
+	guint32 i;
+
+	for (i = 0; i < y_size && i < size; i++)
+		p[i] = i & 0xff;
+	for (i = y_size; i < size; i++)
+		p[i] = 0x80;
+}
+
+static gboolean
+contains_h264_start_code(const guint8 *data, gsize size)
+{
+	gsize i;
+
+	for (i = 0; i + 4 <= size; i++) {
+		if (data[i] == 0x00 && data[i + 1] == 0x00 &&
+		    data[i + 2] == 0x00 && data[i + 3] == 0x01)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+void
+test_x264enc_encoder_streaming_produces_h264(void)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	enum v4l2_buf_type type;
+	const guint32 w = 640;
+	const guint32 h = 480;
+	const guint32 frame_size = 640 * 480 * 3 / 2;
+	guint out_count, cap_count, i;
+	int ret;
+
+	if (!gst_element_factory_find("x264enc"))
+		cut_pend("x264enc element is not available");
+
+	prepare_x264enc_backend_fixture(backend);
+	assert_role(V4L_GST_ROLE_ENCODER);
+
+	/* Set the OUTPUT format to a raw NV12 frame. */
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+	format.fmt.pix_mp.width = w;
+	format.fmt.pix_mp.height = h;
+	format.fmt.pix_mp.num_planes = 1;
+	format.fmt.pix_mp.plane_fmt[0].bytesperline = w;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = frame_size;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	/* Set the CAPTURE format to an H264 encoded stream. */
+	memset(&format, 0, sizeof(format));
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 1024 * 1024;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	/* Request OUTPUT (raw) buffers. */
+	memset(&req, 0, sizeof(req));
+	req.count = INPUT_BUFFERING_CNT;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	out_count = req.count;
+	cut_assert(out_count > 0);
+
+	/* Fill each OUTPUT buffer with an NV12 frame and queue it. */
+	for (i = 0; i < out_count; i++) {
+		void *map;
+
+		memset(&buf, 0, sizeof(buf));
+		buf.index = i;
+		buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 2;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+		cut_assert(ret == 0);
+
+		map = libv4l2_plugin.mmap(backend, NULL,
+					  buf.m.planes[0].length,
+					  PROT_READ | PROT_WRITE,
+					  MAP_SHARED, -1,
+					  (int64_t) buf.m.planes[0].m.mem_offset);
+		cut_assert_not_null(map);
+		fill_nv12_frame(map, frame_size);
+		buf.m.planes[0].bytesused = frame_size;
+
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+		cut_assert(ret == 0);
+	}
+
+	/* Start the stream. */
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMON, &type);
+	cut_assert(ret == 0);
+
+	/* Request CAPTURE buffers; blocks until the first encoded frames are
+	   available from the pipeline. */
+	memset(&req, 0, sizeof(req));
+	req.count = 4;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cap_count = req.count;
+	cut_assert(cap_count > 0);
+
+	/* Queue the CAPTURE buffers. */
+	for (i = 0; i < cap_count; i++) {
+		memset(&buf, 0, sizeof(buf));
+		buf.index = i;
+		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 1;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+		cut_assert(ret == 0);
+	}
+
+	/* Dequeue CAPTURE buffers and verify they carry an H264 bitstream. */
+	for (i = 0; i < cap_count; i++) {
+		void *map;
+
+		memset(&buf, 0, sizeof(buf));
+		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 1;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_DQBUF, &buf);
+		cut_assert(ret == 0);
+		cut_assert(buf.m.planes[0].bytesused > 0);
+
+		map = libv4l2_plugin.mmap(backend, NULL,
+					  buf.m.planes[0].length,
+					  PROT_READ, MAP_SHARED, -1,
+					  (int64_t) buf.m.planes[0].m.mem_offset);
+		cut_assert_not_null(map);
+		cut_assert(contains_h264_start_code(
+					(const guint8 *) map,
+					buf.m.planes[0].bytesused));
+	}
+
+	/* Stop the stream. */
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMOFF, &type);
+	cut_assert(ret == 0);
 }
