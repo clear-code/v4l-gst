@@ -45,7 +45,7 @@
 #include "v4l-gst-internal.h"
 
 int
-v4l_gst_querycap_ioctl(struct v4l_gst *priv, struct v4l2_capability *cap)
+v4l_gst_ioctl_querycap(struct v4l_gst *priv, struct v4l2_capability *cap)
 {
 	GST_DEBUG("VIDIOC_QUERYCAP");
 
@@ -282,7 +282,7 @@ set_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 
 int
-v4l_gst_set_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
+v4l_gst_ioctl_set_fmt(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	int ret;
 
@@ -353,7 +353,7 @@ get_fmt_ioctl_cap(struct v4l_gst *priv,
 
 
 int
-v4l_gst_get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
+v4l_gst_ioctl_get_fmt(struct v4l_gst *priv, struct v4l2_format *fmt)
 {
 	struct v4l2_pix_format_mplane *pix_fmt;
 	int ret;
@@ -383,7 +383,7 @@ v4l_gst_get_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *fmt)
 
 
 int
-v4l_gst_enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
+v4l_gst_ioctl_enum_fmt(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 {
 	struct fmt *fmts;
 	gint fmts_num;
@@ -436,7 +436,7 @@ v4l_gst_enum_fmt_ioctl(struct v4l_gst *priv, struct v4l2_fmtdesc *desc)
 
 
 int
-v4l_gst_enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
+v4l_gst_ioctl_enum_framesizes(struct v4l_gst *priv, struct v4l2_frmsizeenum *argp)
 {
 	gchar fourcc_str[5];
 
@@ -504,7 +504,7 @@ v4l_gst_enum_framesizes_ioctl(struct v4l_gst *priv, struct v4l2_frmsizeenum *arg
 
 
 int
-v4l_gst_g_selection_ioctl(struct v4l_gst *priv, struct v4l2_selection *selection)
+v4l_gst_ioctl_g_selection(struct v4l_gst *priv, struct v4l2_selection *selection)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -590,7 +590,7 @@ try_fmt_ioctl_cap(struct v4l_gst *priv, struct v4l2_format *format)
 
 
 int
-v4l_gst_try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
+v4l_gst_ioctl_try_fmt(struct v4l_gst *priv, struct v4l2_format *format)
 {
 	int ret;
 	gchar fourcc_str[5];
@@ -618,7 +618,7 @@ v4l_gst_try_fmt_ioctl(struct v4l_gst *priv, struct v4l2_format *format)
 
 
 int
-v4l_gst_g_crop_ioctl(struct v4l_gst *priv, struct v4l2_crop *crop)
+v4l_gst_ioctl_g_crop(struct v4l_gst *priv, struct v4l2_crop *crop)
 {
 	const gchar *buf_type;
 #ifdef ENABLE_VIDIOC_DEBUG

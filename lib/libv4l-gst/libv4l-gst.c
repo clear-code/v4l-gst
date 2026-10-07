@@ -64,76 +64,76 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 
 	switch (cmd) {
 	case VIDIOC_QUERYCAP:
-		ret = v4l_gst_querycap_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_querycap(priv, arg);
 		break;
 	case VIDIOC_S_FMT:
-		ret = v4l_gst_set_fmt_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_set_fmt(priv, arg);
 		break;
 	case VIDIOC_G_FMT:
-		ret = v4l_gst_get_fmt_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_get_fmt(priv, arg);
 		break;
 	case VIDIOC_ENUM_FMT:
-		ret = v4l_gst_enum_fmt_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_enum_fmt(priv, arg);
 		break;
 	case VIDIOC_G_CTRL:
-		ret = v4l_gst_get_ctrl_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_get_ctrl(priv, arg);
 		break;
 	case VIDIOC_G_EXT_CTRLS:
-		ret = v4l_gst_get_ext_ctrl_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_get_ext_ctrl(priv, arg);
 		break;
 	case VIDIOC_QBUF:
-		ret = v4l_gst_qbuf_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_qbuf(priv, arg);
 		break;
 	case VIDIOC_DQBUF:
-		ret = v4l_gst_dqbuf_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_dqbuf(priv, arg);
 		break;
 	case VIDIOC_QUERYBUF:
-		ret = v4l_gst_querybuf_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_querybuf(priv, arg);
 		break;
 	case VIDIOC_REQBUFS:
-		ret = v4l_gst_reqbuf_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_reqbuf(priv, arg);
 		break;
 	case VIDIOC_STREAMON:
-		ret = v4l_gst_streamon_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_streamon(priv, arg);
 		break;
 	case VIDIOC_STREAMOFF:
-		ret = v4l_gst_streamoff_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_streamoff(priv, arg);
 		break;
 	case VIDIOC_SUBSCRIBE_EVENT:
-		ret = v4l_gst_subscribe_event_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_subscribe_event(priv, arg);
 		break;
 	case VIDIOC_DQEVENT:
-		ret = v4l_gst_dqevent_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_dqevent(priv, arg);
 		break;
 	case VIDIOC_EXPBUF:
-		ret = v4l_gst_expbuf_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_expbuf(priv, arg);
 		break;
 	case VIDIOC_ENUM_FRAMESIZES :
-		ret = v4l_gst_enum_framesizes_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_enum_framesizes(priv, arg);
 		break;
 	case VIDIOC_G_SELECTION :
-		ret = v4l_gst_g_selection_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_g_selection(priv, arg);
 		break;
 	case VIDIOC_QUERYCTRL:
-		ret = v4l_gst_queryctrl_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_queryctrl(priv, arg);
 		break;
 	case VIDIOC_QUERYMENU:
-		ret = v4l_gst_querymenu_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_querymenu(priv, arg);
 		break;
 	case VIDIOC_G_CROP:
-		ret = v4l_gst_g_crop_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_g_crop(priv, arg);
 		break;
 	case VIDIOC_TRY_FMT:
-		ret = v4l_gst_try_fmt_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_try_fmt(priv, arg);
 		break;
 	case VIDIOC_UNSUBSCRIBE_EVENT:
-		ret = v4l_gst_unsubscribe_event_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_unsubscribe_event(priv, arg);
 		break;
 	case VIDIOC_DECODER_CMD:
-		ret = v4l_gst_decoder_cmd_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_decoder_cmd(priv, arg);
 		break;
 	case VIDIOC_TRY_DECODER_CMD:
-		ret = v4l_gst_try_decoder_cmd_ioctl(priv, arg);
+		ret = v4l_gst_ioctl_try_decoder_cmd(priv, arg);
 		break;
 	default:
 		DBG_LOG("unknown ioctl: %lu\n", cmd);

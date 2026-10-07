@@ -335,7 +335,7 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-v4l_gst_qbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_ioctl_qbuf(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret = -1;
 
@@ -795,7 +795,7 @@ dqbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-v4l_gst_dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_ioctl_dqbuf(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	int ret = -1;
 
@@ -821,7 +821,7 @@ v4l_gst_dqbuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 
 
 int
-v4l_gst_querybuf_ioctl(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
+v4l_gst_ioctl_querybuf(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 {
 	struct v4l_gst_buffer *buffers;
 	gint buffers_num;
@@ -1471,7 +1471,7 @@ reqbuf_ioctl_cap(struct v4l_gst *priv,
 
 
 int
-v4l_gst_reqbuf_ioctl(struct v4l_gst *priv, struct v4l2_requestbuffers *req)
+v4l_gst_ioctl_reqbuf(struct v4l_gst *priv, struct v4l2_requestbuffers *req)
 {
 	int ret;
 
@@ -1547,7 +1547,7 @@ streamon_ioctl_out(struct v4l_gst *priv)
 
 
 int
-v4l_gst_streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
+v4l_gst_ioctl_streamon(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
 	int ret;
 
@@ -1570,7 +1570,7 @@ v4l_gst_streamon_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
 
 
 int
-v4l_gst_streamoff_ioctl(struct v4l_gst *priv, enum v4l2_buf_type *type)
+v4l_gst_ioctl_streamoff(struct v4l_gst *priv, enum v4l2_buf_type *type)
 {
 	int ret;
 
@@ -1753,7 +1753,7 @@ v4l_gst_mmap(struct v4l_gst *priv, void *start, size_t length,
 
 
 int
-v4l_gst_expbuf_ioctl(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
+v4l_gst_ioctl_expbuf(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 {
 	struct v4l_gst_buffer *buffer;
 	guint mem_index = 0;

@@ -772,7 +772,7 @@ set_decoder_cmd_state(struct v4l_gst *priv, GstState state)
 
 #endif
 int
-v4l_gst_try_decoder_cmd_ioctl(struct v4l_gst *priv,
+v4l_gst_ioctl_try_decoder_cmd(struct v4l_gst *priv,
 		      struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
@@ -813,7 +813,7 @@ v4l_gst_try_decoder_cmd_ioctl(struct v4l_gst *priv,
 
 
 int
-v4l_gst_decoder_cmd_ioctl(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
+v4l_gst_ioctl_decoder_cmd(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder_cmd)
 {
 	int ret = 0;
 

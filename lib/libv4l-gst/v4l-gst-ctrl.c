@@ -45,7 +45,7 @@
 #include "v4l-gst-internal.h"
 
 int
-v4l_gst_get_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_control *ctrl)
+v4l_gst_ioctl_get_ctrl(struct v4l_gst *priv, struct v4l2_control *ctrl)
 {
 	int ret;
 
@@ -68,7 +68,7 @@ v4l_gst_get_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_control *ctrl)
 
 
 int
-v4l_gst_get_ext_ctrl_ioctl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_ctrls)
+v4l_gst_ioctl_get_ext_ctrl(struct v4l_gst *priv, struct v4l2_ext_controls *ext_ctrls)
 {
 	unsigned int i;
 
@@ -123,7 +123,7 @@ codec_pipeline_enabled(struct v4l_gst *priv, guint32 fourcc)
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L740-L776 */
 int
-v4l_gst_queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
+v4l_gst_ioctl_queryctrl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 {
 #ifdef ENABLE_VIDIOC_DEBUG
 	char *vidioc_features = getenv(ENV_DISABLE_VIDIOC_FEATURES);
@@ -185,7 +185,7 @@ v4l_gst_queryctrl_ioctl(struct v4l_gst *priv, struct v4l2_queryctrl *query_ctrl)
 
 /* See https://github.com/JeffyCN/libv4l-rkmpp/blob/master/src/libv4l-rkmpp-dec.c#L778-L842 */
 int
-v4l_gst_querymenu_ioctl(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
+v4l_gst_ioctl_querymenu(struct v4l_gst *priv, struct v4l2_querymenu *query_menu)
 {
 
 #ifdef ENABLE_VIDIOC_DEBUG
