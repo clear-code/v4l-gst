@@ -1465,7 +1465,11 @@ test_x264enc_encoder_streaming_produces_h264(void)
 	if (!gst_element_factory_find("x264enc"))
 		cut_pend("x264enc element is not available");
 
-	prepare_x264enc_backend_fixture(backend);
+	prepare_pipeline_backend_fixture(backend, V4L_GST_ROLE_ENCODER,
+					 "x264enc tune=zerolatency "
+					 "speed-preset=ultrafast",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, 1024 * 1024);
 	assert_role(V4L_GST_ROLE_ENCODER);
 
 	/* Set the OUTPUT format to a raw NV12 frame. */
@@ -1637,7 +1641,10 @@ test_h264dec_decoder_streaming_produces_nv12(void)
 	if (!stream)
 		cut_pend("failed to generate an h264 sample stream");
 
-	prepare_h264dec_backend_fixture(backend);
+	prepare_pipeline_backend_fixture(backend, V4L_GST_ROLE_DECODER,
+					 "h264parse ! avdec_h264 ! videoconvert",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, 4 * 1024 * 1024);
 	assert_role(V4L_GST_ROLE_DECODER);
 
 	/* Set the OUTPUT format to the H264 encoded stream. */

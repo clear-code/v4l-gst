@@ -15,8 +15,15 @@ GstElement *test_create_pipeline(const gchar *pipeline_str);
 void prepare_format_backend_fixture(struct v4l_gst *priv);
 void prepare_encode_only_role_backend_fixture(struct v4l_gst *priv);
 void prepare_dual_role_backend_fixture(struct v4l_gst *priv);
-void prepare_x264enc_backend_fixture(struct v4l_gst *priv);
-void prepare_h264dec_backend_fixture(struct v4l_gst *priv);
+void prepare_pipeline_backend_fixture(struct v4l_gst *priv,
+				      enum v4l_gst_role role,
+				      const gchar *pipeline,
+				      guint32 codec_fourcc,
+				      guint32 raw_fourcc,
+				      guint32 raw_width,
+				      guint32 raw_height,
+				      guint32 raw_sizeimage,
+				      guint32 stream_sizeimage);
 enum v4l_gst_role get_backend_role(struct v4l_gst *priv);
 #endif
 
