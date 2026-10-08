@@ -128,6 +128,47 @@ prepare_x264enc_backend_fixture(struct v4l_gst *priv)
 	priv->out.cnt = INPUT_BUFFERING_CNT;
 }
 
+/*
+ * Reconfigure the backend into a decoder role backed by a real
+ * "h264parse ! avdec_h264 ! videoconvert" GStreamer pipeline, so that OUTPUT
+ * H264 buffers are decoded to NV12 frames on CAPTURE. The "identity"
+ * placeholder pipeline created by prepare_format_backend_fixture() is dropped
+ * so that the decode pipeline (appsrc ! h264parse ! avdec_h264 ! videoconvert
+ * ! appsink) is created (via VIDIOC_S_FMT on OUTPUT) with a real decoder.
+ *
+ * h264parse is required because it extracts the SPS/PPS into the codec_data
+ * caps that avdec_h264 needs to fix its output format (see README:
+ * "pipeline=h264parse ! omxh264dec"). videoconvert is required because
+ * avdec_h264 emits I420 and the CAPTURE appsink is fixed to NV12, so the
+ * I420->NV12 conversion must happen inside the pipeline.
+ */
+void
+prepare_h264dec_backend_fixture(struct v4l_gst *priv)
+{
+	if (priv->pipeline) {
+		gst_object_unref(priv->pipeline);
+		priv->pipeline = NULL;
+	}
+
+	g_hash_table_remove(priv->config.pipelines, "H264");
+	g_hash_table_insert(priv->config.pipelines, g_strdup("H264"),
+			    g_strdup("h264parse ! avdec_h264 ! videoconvert"));
+	v4l_gst_core_setup_role(priv);
+
+	priv->out.fmt.pixelformat = V4L2_PIX_FMT_H264;
+	priv->out.fmt.width = 320;
+	priv->out.fmt.height = 240;
+	priv->out.fmt.plane_fmt[0].sizeimage = 4 * 1024 * 1024;
+	priv->cap.fmt.pixelformat = V4L2_PIX_FMT_NV12;
+	priv->cap.fmt.width = 320;
+	priv->cap.fmt.height = 240;
+	priv->cap.fmt.num_planes = 1;
+	priv->cap.fmt.plane_fmt[0].bytesperline = 320;
+	priv->cap.fmt.plane_fmt[0].sizeimage = 320 * 240 * 3 / 2;
+	g_atomic_int_set(&priv->cap.fmt_acquirable, 1);
+	priv->out.cnt = INPUT_BUFFERING_CNT;
+}
+
 enum v4l_gst_role
 get_backend_role(struct v4l_gst *priv)
 {

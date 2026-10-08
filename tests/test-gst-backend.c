@@ -1381,6 +1381,73 @@ contains_h264_start_code(const guint8 *data, gsize size)
 	return FALSE;
 }
 
+/*
+ * Produce a self-contained H264 annex-B byte stream by encoding a few
+ * synthetic NV12 frames with x264enc. The stream starts with an inline
+ * SPS/PPS/IDR (key-int-max=1, zerolatency) so that avdec_h264 can decode it
+ * without an h264parse element. Returns a newly allocated buffer (free with
+ * g_free()) or NULL on failure.
+ */
+static guint8 *
+generate_h264_sample(guint32 n_frames, guint32 width, guint32 height,
+		     gsize *out_len)
+{
+	gchar *desc;
+	GstElement *pipeline;
+	GstElement *sink;
+	GstSample *sample;
+	GstBuffer *buffer;
+	GstMapInfo map;
+	GByteArray *stream;
+
+	*out_len = 0;
+
+	desc = g_strdup_printf(
+		"videotestsrc num-buffers=%u is-live=false "
+		"! videoconvert ! video/x-raw,format=NV12,width=%u,height=%u,framerate=30/1 "
+		"! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=1 "
+		"! appsink name=h264enc_sink", n_frames, width, height);
+	pipeline = gst_parse_launch(desc, NULL);
+	g_free(desc);
+	if (!pipeline)
+		return NULL;
+
+	sink = gst_bin_get_by_name(GST_BIN(pipeline), "h264enc_sink");
+	if (!sink) {
+		gst_object_unref(pipeline);
+		return NULL;
+	}
+
+	if (gst_element_set_state(pipeline, GST_STATE_PLAYING) ==
+	    GST_STATE_CHANGE_FAILURE) {
+		gst_object_unref(sink);
+		gst_object_unref(pipeline);
+		return NULL;
+	}
+
+	stream = g_byte_array_new();
+	while ((sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink),
+						       GST_CLOCK_TIME_NONE)) != NULL) {
+		buffer = gst_sample_get_buffer(sample);
+		if (buffer && gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+			g_byte_array_append(stream, map.data, map.size);
+			gst_buffer_unmap(buffer, &map);
+		}
+		gst_sample_unref(sample);
+	}
+
+	gst_object_unref(sink);
+	gst_element_set_state(pipeline, GST_STATE_NULL);
+	gst_object_unref(pipeline);
+
+	if (stream->len == 0) {
+		g_byte_array_free(stream, TRUE);
+		return NULL;
+	}
+	*out_len = stream->len;
+	return g_byte_array_free(stream, FALSE);
+}
+
 void
 test_x264enc_encoder_streaming_produces_h264(void)
 {
@@ -1521,4 +1588,221 @@ test_x264enc_encoder_streaming_produces_h264(void)
 	errno = 0;
 	ret = v4l_gst_ioctl(VIDIOC_STREAMOFF, &type);
 	cut_assert(ret == 0);
+}
+
+/*
+ * Decode a self-contained H264 annex-B byte stream (produced by
+ * generate_h264_sample()) with the real avdec_h264 pipeline and verify that
+ * the CAPTURE side yields raw NV12 frames with monotonically non-decreasing
+ * timestamps.  VIDIOC_DECODER_CMD with V4L2_DEC_CMD_STOP signals end of
+ * stream so the decoder is exercised through its EOS/flush path and the
+ * final CAPTURE buffer is returned with V4L2_BUF_FLAG_LAST.
+ */
+void
+test_h264dec_decoder_streaming_produces_nv12(void)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	enum v4l2_buf_type type;
+	const guint32 w = 320;
+	const guint32 h = 240;
+	const gsize frame_size = w * h * 3 / 2;
+	/* The CAPTURE request below blocks until the decoder fills its output
+	   buffer pool, so feed more frames than the pool can hold to guarantee
+	   the pool is filled. key-int-max=1 keeps the stream compact. */
+	const guint32 n_frames = 100;
+	gsize stream_len = 0;
+	guint8 *stream;
+	guint out_count, cap_count, i;
+	guint frame_count = 0;
+	const guint max_frames = 1024;
+	gboolean got_last = FALSE;
+	gint64 last_sec = -1, last_usec = 0;
+	int ret;
+
+	/* The decode pipeline is "h264parse ! avdec_h264 ! videoconvert"
+	   (per README, h264parse extracts the SPS/PPS into the codec_data caps
+	   that avdec_h264 needs; videoconvert converts the decoder's I420
+	   output to the NV12 CAPTURE format). All four elements are required. */
+	if (!gst_element_factory_find("h264parse") ||
+	    !gst_element_factory_find("avdec_h264") ||
+	    !gst_element_factory_find("videoconvert") ||
+	    !gst_element_factory_find("x264enc"))
+		cut_pend("h264parse, avdec_h264, videoconvert or x264enc "
+			 "element is not available");
+
+	stream = generate_h264_sample(n_frames, w, h, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	prepare_h264dec_backend_fixture(backend);
+	assert_role(V4L_GST_ROLE_DECODER);
+
+	/* Set the OUTPUT format to the H264 encoded stream. */
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 4 * 1024 * 1024;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	/* Set the CAPTURE format to a raw NV12 frame. */
+	memset(&format, 0, sizeof(format));
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+	format.fmt.pix_mp.width = w;
+	format.fmt.pix_mp.height = h;
+	format.fmt.pix_mp.num_planes = 1;
+	format.fmt.pix_mp.plane_fmt[0].bytesperline = w;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = frame_size;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	/* Request OUTPUT buffers; the whole stream is carried in the first
+	   buffer.  End of stream is signalled with V4L2_DEC_CMD_STOP. */
+	memset(&req, 0, sizeof(req));
+	req.count = 1;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	out_count = req.count;
+	cut_assert(out_count >= 1);
+
+	/* Fill the first OUTPUT buffer with the whole H264 stream and queue it. */
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	cut_assert(ret == 0);
+	{
+		void *map;
+
+		map = libv4l2_plugin.mmap(backend, NULL,
+					  buf.m.planes[0].length,
+					  PROT_READ | PROT_WRITE,
+					  MAP_SHARED, -1,
+					  (int64_t) buf.m.planes[0].m.mem_offset);
+		cut_assert_not_null(map);
+		cut_assert(stream_len <= (gsize) buf.m.planes[0].length);
+		memcpy(map, stream, stream_len);
+		buf.m.planes[0].bytesused = (unsigned int) stream_len;
+	}
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	cut_assert(ret == 0);
+
+	/* Start the stream. */
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMON, &type);
+	cut_assert(ret == 0);
+
+	/* Request CAPTURE buffers; blocks until the decoder fills the output
+	   buffer pool with decoded frames. */
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cap_count = req.count;
+	cut_assert(cap_count > 0);
+
+	/* Signal end of stream now that the pipeline is running.  The decoder
+	   flushes any buffered frames and the final CAPTURE buffer is marked
+	   with V4L2_BUF_FLAG_LAST. */
+	{
+		struct v4l2_decoder_cmd decoder_cmd = { 0, };
+
+		decoder_cmd.cmd = V4L2_DEC_CMD_STOP;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_DECODER_CMD, &decoder_cmd);
+		cut_assert(ret == 0);
+	}
+
+	/* Queue the CAPTURE buffers. */
+	for (i = 0; i < cap_count; i++) {
+		memset(&buf, 0, sizeof(buf));
+		buf.index = i;
+		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 2;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+		cut_assert(ret == 0);
+	}
+
+	/* Dequeue CAPTURE buffers until the decoder reports the final buffer.
+	   Each dequeued buffer is queued again so the decoder can keep
+	   flushing frames into the fixed CAPTURE buffer pool. */
+	while (!got_last && frame_count < max_frames) {
+		void *map;
+		guint8 non_zero = 0;
+		gsize j;
+
+		memset(&buf, 0, sizeof(buf));
+		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 2;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_DQBUF, &buf);
+		if (ret != 0) {
+			/* The last decoded buffer is held back until the
+			   pipeline EOS is observed; retry until it is
+			   released. */
+			g_usleep(1000);
+			continue;
+		}
+		cut_assert(buf.m.planes[0].bytesused > 0);
+
+		map = libv4l2_plugin.mmap(backend, NULL,
+					  buf.m.planes[0].length,
+					  PROT_READ, MAP_SHARED, -1,
+					  (int64_t) buf.m.planes[0].m.mem_offset);
+		cut_assert_not_null(map);
+		for (j = 0; j < 4096 && j < buf.m.planes[0].bytesused; j++)
+			non_zero |= ((guint8 *) map)[j];
+		munmap(map, buf.m.planes[0].length);
+		cut_assert(non_zero != 0);
+
+		cut_assert((buf.timestamp.tv_sec > last_sec) ||
+			   (buf.timestamp.tv_sec == last_sec &&
+			    buf.timestamp.tv_usec >= last_usec));
+		last_sec = buf.timestamp.tv_sec;
+		last_usec = buf.timestamp.tv_usec;
+
+		frame_count++;
+		if (buf.flags & V4L2_BUF_FLAG_LAST) {
+			got_last = TRUE;
+			break;
+		}
+
+		buf.flags = 0;
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+		cut_assert(ret == 0);
+	}
+
+	cut_assert(got_last);
+	cut_assert(frame_count >= cap_count);
+
+	/* Stop the stream. */
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMOFF, &type);
+	cut_assert(ret == 0);
+
+	g_free(stream);
 }

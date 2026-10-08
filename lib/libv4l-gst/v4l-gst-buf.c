@@ -86,6 +86,7 @@ check_no_index_v4l2_buffer(struct v4l2_buffer *v4l2buf,
 			   struct v4l_gst_buffer *buffers, GstBufferPool *pool)
 {
 	GstVideoMeta *meta;
+	GstVideoInfo info;
 	guint n_planes;
 
 	if (!is_supported_memory_io(v4l2buf->memory))
@@ -104,9 +105,9 @@ check_no_index_v4l2_buffer(struct v4l2_buffer *v4l2buf,
 		return FALSE;
 	}
 
-	if (v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL,
-				 &meta))
-		n_planes = meta->n_planes;
+	if (v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf,
+			 &info, &meta))
+		n_planes = meta ? meta->n_planes : GST_VIDEO_INFO_N_PLANES(&info);
 	else
 		n_planes = 1;
 
@@ -363,7 +364,9 @@ v4l_gst_ioctl_qbuf(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 static inline guint
 calc_plane_size(GstVideoInfo *info, GstVideoMeta *meta, gint index)
 {
-	return meta->stride[index] * GST_VIDEO_INFO_COMP_HEIGHT(info, index);
+	guint stride = meta ? meta->stride[index]
+			      : GST_VIDEO_INFO_PLANE_STRIDE(info, index);
+	return stride * GST_VIDEO_INFO_COMP_HEIGHT(info, index);
 }
 
 
@@ -407,11 +410,15 @@ fill_v4l2_buffer(struct v4l_gst *priv, GstBufferPool *pool,
 		 struct v4l2_buffer *v4l2buf)
 {
 	GstVideoMeta *meta = NULL;
+	GstVideoInfo info;
 	guint n_planes;
 
-	v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf, NULL, &meta);
-
-	n_planes = (meta) ? meta->n_planes : 1;
+	if (v4l_gst_pipeline_get_raw_video_params(pool, buffers[v4l2buf->index].gstbuf,
+			 &info, &meta))
+		n_planes = (meta) ? meta->n_planes
+				  : GST_VIDEO_INFO_N_PLANES(&info);
+	else
+		n_planes = 1;
 
 	set_v4l2_buffer_plane_params(priv, buffers, n_planes, bytesused,
 				     timestamp, v4l2buf);
@@ -883,8 +890,10 @@ set_mem_offset(struct v4l_gst_buffer *buffer, GstBufferPool *pool, gsize offset)
 				  page_size) + offset;
 	}
 
-	if (meta) {
-		for (i = 0; i < meta->n_planes; i++) {
+	{
+		guint n_planes = meta ? meta->n_planes
+				       : GST_VIDEO_INFO_N_PLANES(&info);
+		for (i = 0; i < (gint) n_planes; i++) {
 			buffer->planes[i].m.mem_offset = offset;
 			offset += PAGE_ALIGN(calc_plane_size(&info, meta, i),
 					     page_size);
@@ -1303,10 +1312,16 @@ retrieve_cap_frame_info(GstBufferPool *pool, GstBuffer *gstbuf,
 		return FALSE;
 	}
 
-	for (i = 0; i < meta->n_planes; i++) {
-		cap_fmt->plane_fmt[i].sizeimage =
-			calc_plane_size(&info, meta, i);
-		cap_fmt->plane_fmt[i].bytesperline = meta->stride[i];
+	{
+		guint n_planes = meta ? meta->n_planes
+				       : GST_VIDEO_INFO_N_PLANES(&info);
+		for (i = 0; i < (gint) n_planes; i++) {
+			cap_fmt->plane_fmt[i].sizeimage =
+				calc_plane_size(&info, meta, i);
+			cap_fmt->plane_fmt[i].bytesperline =
+				meta ? meta->stride[i]
+				      : GST_VIDEO_INFO_PLANE_STRIDE(&info, i);
+		}
 	}
 
 	return TRUE;
@@ -1669,6 +1684,7 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 	       int prot)
 {
 	GstVideoMeta *meta;
+	GstVideoInfo vinfo;
 	GstMapInfo info;
 	void *data;
 	GstMapFlags map_flags;
@@ -1691,7 +1707,7 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 	} else {
 		if (!v4l_gst_pipeline_get_raw_video_params(priv->cap.pool,
 							  priv->cap.buffers[index].gstbuf,
-							  NULL, &meta)) {
+							  &vinfo, &meta)) {
 			GST_ERROR("Failed to get video meta data");
 			errno = EINVAL;
 			gst_buffer_unmap(priv->cap.buffers[index].gstbuf,
@@ -1699,7 +1715,8 @@ map_cap_buffer(struct v4l_gst *priv, int index, int plane,
 			return MAP_FAILED;
 		}
 
-		data = info.data + meta->offset[plane];
+		data = info.data + (meta ? meta->offset[plane]
+					 : GST_VIDEO_INFO_PLANE_OFFSET(&vinfo, plane));
 	}
 
 	gst_buffer_unmap(priv->cap.buffers[index].gstbuf, &info);

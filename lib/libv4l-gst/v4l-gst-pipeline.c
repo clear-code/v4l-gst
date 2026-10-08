@@ -486,8 +486,6 @@ v4l_gst_pipeline_get_raw_video_params(GstBufferPool *pool, GstBuffer *gstbuf, Gs
 		return FALSE;
 
 	vmeta = gst_buffer_get_video_meta(gstbuf);
-	if (!vmeta)
-		return FALSE;
 
 	if (info)
 		memcpy(info, &vinfo, sizeof(GstVideoInfo));
