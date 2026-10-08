@@ -392,7 +392,7 @@ appsink_callback_new_sample(GstAppSink *appsink, gpointer user_data)
 
 		crc = frame_crc32(gstbuf, priv->config.frame_check);
 		gst_mini_object_set_qdata(GST_MINI_OBJECT(gstbuf),
-					  cap_buf_crc_quark(),
+					  v4l_gst_cap_buf_crc_quark(),
 					  GUINT_TO_POINTER(crc),
 					  NULL);
 		GST_CAT_DEBUG(v4l_gst_buffer_debug_category,
@@ -866,4 +866,3 @@ v4l_gst_ioctl_decoder_cmd(struct v4l_gst *priv, struct v4l2_decoder_cmd *decoder
 
 	return ret;
 }
-

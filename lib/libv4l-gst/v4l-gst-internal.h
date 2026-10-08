@@ -198,7 +198,7 @@ extern GstDebugCategory *v4l_gst_ioctl_debug_category;
 extern GstDebugCategory *v4l_gst_buffer_debug_category;
 #define GST_CAT_DEFAULT v4l_gst_debug_category
 
-GQuark	      cap_buf_crc_quark				   (void);
+GQuark	      v4l_gst_cap_buf_crc_quark			   (void);
 
 /*
  * Functions shared between the v4l-gst-*.c translation units,

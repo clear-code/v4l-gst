@@ -286,7 +286,7 @@ qbuf_ioctl_cap(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		guint32 crc, crc_dest;
 
 		crc_p = gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer->gstbuf),
-						  cap_buf_crc_quark());
+						  v4l_gst_cap_buf_crc_quark());
 		crc = GPOINTER_TO_UINT(crc_p);
 		crc_dest = frame_crc32(buffer->gstbuf,
 				       priv->config.frame_check);
@@ -1838,4 +1838,3 @@ v4l_gst_ioctl_expbuf(struct v4l_gst *priv, struct v4l2_exportbuffer *expbuf)
 
 	return 0;
 }
-

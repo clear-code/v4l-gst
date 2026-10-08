@@ -48,7 +48,7 @@ GstDebugCategory *v4l_gst_debug_category;
 GstDebugCategory *v4l_gst_ioctl_debug_category;
 GstDebugCategory *v4l_gst_buffer_debug_category;
 
-G_DEFINE_QUARK(cap_buf_crc, cap_buf_crc)
+G_DEFINE_QUARK(v4l_gst_cap_buf_crc, v4l_gst_cap_buf_crc)
 
 void
 v4l_gst_core_reset_cap_timestamp_state(struct v4l_gst *priv)
@@ -1161,4 +1161,3 @@ v4l_gst_deinit(struct v4l_gst *priv)
 
 	GST_DEBUG("v4l_gst_deinit end");
 }
-
