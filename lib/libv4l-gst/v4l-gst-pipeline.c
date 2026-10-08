@@ -438,12 +438,12 @@ v4l_gst_pipeline_setup_app_elements(struct v4l_gst *priv)
 	   The amount of buffers is managed by the buffer pool. */
 	gst_app_src_set_max_bytes(GST_APP_SRC(priv->appsrc), 0);
 
-	/* Video frames are timestamped in time, not bytes. The appsrc
-	   "format" property drives the segment format (gst_app_src_start
-	   copies it into the base src), and do-timestamp assigns PTS/DTS
-	   from the caps framerate since the wrapped buffers carry no PTS. */
-	g_object_set(G_OBJECT(priv->appsrc), "format", GST_FORMAT_TIME,
-		     "do-timestamp", TRUE, NULL);
+	/* Use time-based appsrc segments only for raw encoder input. Decoder
+	   input keeps the previous appsrc behavior to avoid changing the
+	   segment format seen by the codec parser/decoder. */
+	if (priv->out.kind == V4L_GST_MEDIA_KIND_RAW)
+		g_object_set(G_OBJECT(priv->appsrc), "format", GST_FORMAT_TIME,
+			     "do-timestamp", TRUE, NULL);
 
 	gst_base_sink_set_sync(GST_BASE_SINK(priv->appsink), FALSE);
 
