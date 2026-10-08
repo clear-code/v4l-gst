@@ -17,11 +17,15 @@ jobs:
 
     - name: Install apt packages
       run: |
+        # x264 and the GStreamer plugins that expose x264enc/avdec_h264 are
+        # published in Ubuntu's community-maintained universe component.
+        sudo add-apt-repository -y universe
         sudo apt-get update
         sudo apt-get install -y build-essential autoconf automake libtool \
           intltool gtk-doc-tools pkg-config python3 ninja-build meson \
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-          libglib2.0-dev gettext
+          libglib2.0-dev gettext gstreamer1.0-plugins-ugly \
+          gstreamer1.0-libav gstreamer1.0-plugins-bad
 
     - name: Build
       run: |
