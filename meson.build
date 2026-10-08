@@ -1,5 +1,5 @@
 project('libv4l-gst', 'c',
-  version: '2.0.0',
+  version: '2.1.0',
   license: 'LGPL-2.1-or-later',
   meson_version: '>=0.63',
   default_options: [
