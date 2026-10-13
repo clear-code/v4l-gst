@@ -352,12 +352,17 @@ static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
-	if (priv->eos_gstbuf)
+	if (priv->eos_gstbuf) {
 		v4l_gst_buf_release_out_buffer(priv, priv->eos_gstbuf);
+		priv->eos_gstbuf = NULL;
+	}
 	g_mutex_lock(&priv->queue_mutex);
 	GST_DEBUG("EOS: Got from AppSink. Cached buffers: %u",
 		  g_queue_get_length(priv->cap.gstbufs_queue));
 	priv->eos_state = EOS_GOT;
+	/* Wake up waiters that stop early once the stream has ended,
+	   e.g. wait_for_bufs_collected(). */
+	g_cond_signal(&priv->queue_cond);
 	if (priv->cap.gstbufs_queue &&
 	    !g_queue_is_empty(priv->cap.gstbufs_queue)) {
 		set_event(priv->event_state, POLLOUT);

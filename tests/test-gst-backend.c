@@ -2112,3 +2112,58 @@ test_h264dec_reqbuf_zero_while_holding_all_cap_buffers(void)
 	cut_assert(g_get_monotonic_time() - start_time <
 		  5 * G_TIME_SPAN_SECOND);
 }
+
+/*
+ * A stream shorter than the requested CAPTURE buffer count must not
+ * stall VIDIOC_REQBUF until the collection timeout: the EOS event sent
+ * by QBUF(bytesused=0) ends the stream, and VIDIOC_REQBUF is allowed to
+ * return fewer buffers than requested.
+ */
+void
+test_h264dec_reqbuf_cap_short_stream_with_eos(void)
+{
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	guint8 *stream;
+	gsize stream_len = 0;
+	gint64 start_time;
+	int ret;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(3, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	/* QBUF with bytesused == 0 sends an EOS event to the pipeline. */
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 1;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	buf.m.planes[0].bytesused = 0;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	cut_assert(ret == 0);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	start_time = g_get_monotonic_time();
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count >= 1);
+	cut_assert(req.count < 8);
+	/* The wait must have ended at the EOS, not at the collection
+	   timeout. */
+	cut_assert(g_get_monotonic_time() - start_time <
+		  5 * G_TIME_SPAN_SECOND);
+}
