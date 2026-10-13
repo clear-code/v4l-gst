@@ -2063,3 +2063,52 @@ test_h264dec_reqbuf_cap_close_race(void)
 	   INITIAL_BUFFER_WAIT_TIMEOUT. */
 	cut_assert(joined_time - close_time < 5 * G_TIME_SPAN_SECOND);
 }
+
+/*
+ * Stop the pipeline with VIDIOC_REQBUF(count=0) while the client still
+ * holds every dequeued CAPTURE buffer.  The decoder is then blocked
+ * acquiring a CAPTURE buffer for the next frame, and before the
+ * bounded-stop fix the state change to GST_STATE_NULL waited forever
+ * for that streaming thread.
+ */
+void
+test_h264dec_reqbuf_zero_while_holding_all_cap_buffers(void)
+{
+	struct v4l2_requestbuffers req = { 0, };
+	guint8 *stream;
+	gsize stream_len = 0;
+	gint64 start_time;
+	int ret;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(100, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count > 0);
+
+	/* Every CAPTURE buffer is in the DEQUEUED state held by the
+	   client, so the decoder cannot produce more frames. */
+	memset(&req, 0, sizeof(req));
+	req.count = 0;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	start_time = g_get_monotonic_time();
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(g_get_monotonic_time() - start_time <
+		  5 * G_TIME_SPAN_SECOND);
+}
