@@ -467,10 +467,16 @@ dequeue_blocking(struct v4l_gst *priv, GQueue *queue, GCond *cond)
 {
 	GstBuffer *gstbuf;
 
-        gstbuf = g_queue_pop_head(queue);
-	while (!gstbuf && priv->is_pipeline_started) {
+	gstbuf = g_queue_pop_head(queue);
+	while (!gstbuf && priv->is_pipeline_started &&
+	       !g_atomic_int_get(&priv->shutting_down)) {
 		g_cond_wait(cond, &priv->queue_mutex);
 		gstbuf = g_queue_pop_head(queue);
+	}
+	if (!gstbuf && g_atomic_int_get(&priv->shutting_down)) {
+		/* Streaming is being stopped by v4l_gst_deinit(); report it
+		   the same way a real device does after STREAMOFF. */
+		errno = EPERM;
 	}
 
 	return gstbuf;
