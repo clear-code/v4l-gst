@@ -1,4 +1,5 @@
 #include "v4l-gst-testhooks.h"
+#include "v4l-gst.h"
 #include <cutter.h>
 #include <errno.h>
 #include <glib/gstdio.h>
@@ -1812,4 +1813,502 @@ test_h264dec_decoder_streaming_produces_nv12(void)
 	cut_assert(ret == 0);
 
 	g_free(stream);
+}
+
+/*
+ * Shared setup for the shutdown tests: configure a real H264 decoder and
+ * optionally queue an OUTPUT payload. start_h264dec_stream() also starts
+ * streaming; a zero-length payload leaves all OUTPUT buffers dequeued.
+ */
+static void
+prepare_h264dec_stream(const guint8 *stream, gsize stream_len)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	const guint32 w = 320;
+	const guint32 h = 240;
+	const gsize frame_size = w * h * 3 / 2;
+	void *map;
+	int ret;
+
+	prepare_pipeline_backend_fixture(backend, V4L_GST_ROLE_DECODER,
+					 "h264parse ! avdec_h264 ! videoconvert",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, 4 * 1024 * 1024);
+	assert_role(V4L_GST_ROLE_DECODER);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 4 * 1024 * 1024;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	memset(&format, 0, sizeof(format));
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+	format.fmt.pix_mp.width = w;
+	format.fmt.pix_mp.height = h;
+	format.fmt.pix_mp.num_planes = 1;
+	format.fmt.pix_mp.plane_fmt[0].bytesperline = w;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = frame_size;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_S_FMT, &format);
+	cut_assert(ret == 0);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 4;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count >= 1);
+	if (stream_len == 0)
+		return;
+
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	cut_assert(ret == 0);
+
+	map = libv4l2_plugin.mmap(backend, NULL, buf.m.planes[0].length,
+				  PROT_READ | PROT_WRITE, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert_not_null(map);
+	cut_assert(stream_len <= (gsize) buf.m.planes[0].length);
+	memcpy(map, stream, stream_len);
+	buf.m.planes[0].bytesused = (unsigned int) stream_len;
+	munmap(map, buf.m.planes[0].length);
+
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	cut_assert(ret == 0);
+}
+
+static void
+start_h264dec_stream(const guint8 *stream, gsize stream_len)
+{
+	enum v4l2_buf_type type;
+	int ret;
+
+	prepare_h264dec_stream(stream, stream_len);
+
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMON, &type);
+	cut_assert(ret == 0);
+}
+
+static gboolean
+h264dec_pipeline_available(void)
+{
+	return gst_element_factory_find("h264parse") != NULL &&
+	       gst_element_factory_find("avdec_h264") != NULL &&
+	       gst_element_factory_find("videoconvert") != NULL;
+}
+
+/*
+ * Regression test for the shutdown deadlock: start decoding and close the
+ * backend immediately after STREAMON without draining anything.  Before the
+ * deinit lifecycle fix, close() freed shared state while the streaming
+ * threads were still running, which hung or crashed the process.
+ */
+void
+test_h264dec_close_immediately_after_streamon(void)
+{
+	guint8 *stream;
+	gsize stream_len = 0;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(100, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	/* Return immediately; teardown() closes the backend while the decoder
+	   is still running.  The test passes if close() returns. */
+}
+
+struct dqbuf_thread_args {
+	int ret;
+	int err;
+};
+
+static gpointer
+dqbuf_cap_until_shutdown(gpointer data)
+{
+	struct dqbuf_thread_args *args = data;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+
+	buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+
+	/* Keep dequeuing until the stream is torn down: a blocked DQBUF is
+	   cancelled with EPERM, a later re-entry is rejected with EBUSY. */
+	for (;;) {
+		errno = 0;
+		args->ret = v4l_gst_ioctl(VIDIOC_DQBUF, &buf);
+		if (args->ret == 0)
+			continue;
+		args->err = errno;
+		if (args->err == EPERM || args->err == EBUSY)
+			break;
+		g_usleep(1000);
+	}
+
+	return NULL;
+}
+
+/*
+ * Close the backend while another thread is blocked in a blocking
+ * VIDIOC_DQBUF on CAPTURE.  The blocked call must be cancelled by the
+ * shutdown instead of hanging forever.
+ */
+void
+test_h264dec_dqbuf_blocking_close_race(void)
+{
+	struct dqbuf_thread_args args = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	guint8 *stream;
+	gsize stream_len = 0;
+	GThread *thread;
+	int ret;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(100, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count > 0);
+
+	args.ret = 0;
+	thread = g_thread_new("dqbuf-cap", dqbuf_cap_until_shutdown, &args);
+	g_usleep(200 * 1000);
+
+	/* Close while the thread is inside VIDIOC_DQBUF. */
+	libv4l2_plugin.close(backend);
+	backend = NULL;
+
+	g_thread_join(thread);
+	cut_assert(args.ret == -1);
+	cut_assert(args.err == EPERM || args.err == EBUSY);
+}
+
+static gpointer
+reqbuf_cap_once(gpointer data)
+{
+	struct dqbuf_thread_args *args = data;
+	struct v4l2_requestbuffers req = { 0, };
+
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	args->ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	args->err = errno;
+
+	return NULL;
+}
+
+/*
+ * Close the backend while another thread is inside a VIDIOC_REQBUFS on
+ * CAPTURE waiting for the first decoded buffer.  The payload carries no
+ * valid H264 data, so that wait can only end when the shutdown cancels it;
+ * it must not block until the initial-buffer timeout expires.
+ */
+void
+test_h264dec_reqbuf_cap_close_race(void)
+{
+	struct dqbuf_thread_args args = { 0, };
+	const guint8 garbage[] = { 0x00 };
+	GThread *thread;
+	gint64 close_time, joined_time;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	start_h264dec_stream(garbage, sizeof(garbage));
+
+	args.ret = 0;
+	thread = g_thread_new("reqbuf-cap", reqbuf_cap_once, &args);
+	g_usleep(200 * 1000);
+
+	close_time = g_get_monotonic_time();
+	libv4l2_plugin.close(backend);
+	backend = NULL;
+
+	g_thread_join(thread);
+	joined_time = g_get_monotonic_time();
+
+	cut_assert(args.ret == -1);
+	cut_assert(args.err == EINVAL);
+	/* The wait must have been cancelled by the shutdown, not run to the
+	   INITIAL_BUFFER_WAIT_TIMEOUT. */
+	cut_assert(joined_time - close_time < 5 * G_TIME_SPAN_SECOND);
+}
+
+/*
+ * Stop the pipeline with VIDIOC_REQBUF(count=0) while the client still
+ * holds every dequeued CAPTURE buffer.  The decoder is then blocked
+ * acquiring a CAPTURE buffer for the next frame, and before the
+ * bounded-stop fix the state change to GST_STATE_NULL waited forever
+ * for that streaming thread.
+ */
+void
+test_h264dec_reqbuf_zero_while_holding_all_cap_buffers(void)
+{
+	struct v4l2_requestbuffers req = { 0, };
+	guint8 *stream;
+	gsize stream_len = 0;
+	gint64 start_time;
+	int ret;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(100, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count > 0);
+
+	/* Every CAPTURE buffer is in the DEQUEUED state held by the
+	   client, so the decoder cannot produce more frames. */
+	memset(&req, 0, sizeof(req));
+	req.count = 0;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	start_time = g_get_monotonic_time();
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(g_get_monotonic_time() - start_time <
+		  5 * G_TIME_SPAN_SECOND);
+}
+
+/*
+ * A stream shorter than the requested CAPTURE buffer count must not
+ * stall VIDIOC_REQBUF until the collection timeout: the EOS event sent
+ * by QBUF(bytesused=0) ends the stream, and VIDIOC_REQBUF is allowed to
+ * return fewer buffers than requested.
+ */
+void
+test_h264dec_reqbuf_cap_short_stream_with_eos(void)
+{
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	guint8 *stream;
+	gsize stream_len = 0;
+	gint64 start_time;
+	int ret;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	stream = generate_h264_sample(3, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	/* QBUF with bytesused == 0 sends an EOS event to the pipeline. */
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 1;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	buf.m.planes[0].bytesused = 0;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	cut_assert(ret == 0);
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	start_time = g_get_monotonic_time();
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	cut_assert(ret == 0);
+	cut_assert(req.count >= 1);
+	cut_assert(req.count < 8);
+	/* The wait must have ended at the EOS, not at the collection
+	   timeout. */
+	cut_assert(g_get_monotonic_time() - start_time <
+		  5 * G_TIME_SPAN_SECOND);
+}
+
+/* EOS must return both OUTPUT buffers, not merely signal POLLIN while
+ * retaining the empty buffer outside the pool. Nonblocking DQBUF makes
+ * this regression fail instead of hanging the test process. */
+void
+test_h264dec_eos_returns_empty_output_buffer(void)
+{
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0, };
+	guint8 *stream;
+	gsize stream_len = 0;
+	gboolean returned[2] = { FALSE, FALSE };
+	gboolean got_eos;
+	guint count = 0;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+	stream = generate_h264_sample(3, 320, 240, &stream_len);
+	cut_assert_not_null(stream);
+	start_h264dec_stream(stream, stream_len);
+	g_free(stream);
+
+	buf.index = 1;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_REQBUFS, &req));
+	g_mutex_lock(&backend->queue_mutex);
+	got_eos = backend->eos_state == EOS_GOT;
+	g_mutex_unlock(&backend->queue_mutex);
+	cut_assert(got_eos);
+
+	backend->is_non_blocking = TRUE;
+	while (v4l_gst_ioctl(VIDIOC_DQBUF, &buf) == 0) {
+		cut_assert(buf.index < 2);
+		cut_assert(!returned[buf.index]);
+		returned[buf.index] = TRUE;
+		count++;
+	}
+	cut_assert_equal_int(EAGAIN, errno);
+	cut_assert_equal_uint(2, count);
+	cut_assert_equal_int(0, backend->out.returned_cnt);
+}
+
+/* Stage an operation paused between enter_operation() and dispatch, then
+ * let shutdown stop the pipeline before resuming that admitted handler.
+ * New plugin calls are also checked through the actual public wrapper. */
+void
+test_shutdown_rejects_pre_admitted_streamon_and_reqbuf_out(void)
+{
+	const guint8 garbage[] = { 0 };
+	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	struct v4l2_requestbuffers req = { 0, };
+	int streamon_ret, streamon_errno, reqbuf_ret, reqbuf_errno;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+	start_h264dec_stream(garbage, sizeof(garbage));
+	cut_assert(v4l_gst_core_enter_operation(backend));
+	cut_assert(v4l_gst_core_enter_operation(backend));
+	g_atomic_int_set(&backend->shutting_down, 1);
+	v4l_gst_core_set_pipeline_started(backend, FALSE);
+	gst_buffer_pool_set_active(backend->out.pool, FALSE);
+	gst_buffer_pool_set_active(backend->cap.pool, FALSE);
+	cut_assert_equal_int(GST_STATE_CHANGE_SUCCESS,
+		gst_element_set_state(backend->pipeline, GST_STATE_NULL));
+
+	streamon_ret = v4l_gst_ioctl_streamon(backend, &type);
+	streamon_errno = errno;
+	v4l_gst_core_leave_operation(backend);
+	req.count = 4;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	reqbuf_ret = v4l_gst_ioctl_reqbuf(backend, &req);
+	reqbuf_errno = errno;
+	v4l_gst_core_leave_operation(backend);
+
+	cut_assert_equal_int(-1, streamon_ret);
+	cut_assert_equal_int(EBUSY, streamon_errno);
+	cut_assert_equal_int(-1, reqbuf_ret);
+	cut_assert_equal_int(EBUSY, reqbuf_errno);
+	cut_assert_equal_int(GST_STATE_NULL, GST_STATE_TARGET(backend->pipeline));
+	cut_assert(!gst_buffer_pool_is_active(backend->out.pool));
+	cut_assert_equal_int(0, g_atomic_int_get(&backend->inflight_ioctls));
+	cut_assert_equal_int(-1, v4l_gst_ioctl(VIDIOC_STREAMON, &type));
+	cut_assert_equal_int(EBUSY, errno);
+	cut_assert(libv4l2_plugin.mmap(backend, NULL, 4096, PROT_READ,
+		MAP_SHARED, -1, 0) == MAP_FAILED);
+	cut_assert_equal_int(EBUSY, errno);
+	cut_assert_equal_int(0, g_atomic_int_get(&backend->inflight_ioctls));
+}
+
+static void
+mark_eos_buffer_freed(gpointer data, GstMiniObject *object)
+{
+	(void)object;
+	*(gboolean *)data = TRUE;
+}
+
+/* Closing without another STREAMON or an EOS callback must release the
+ * cached acquired reference. Also reject a second pending empty QBUF. */
+void
+test_h264dec_close_releases_pending_eos_buffer(void)
+{
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES] = { 0, };
+	gboolean freed = FALSE;
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+	prepare_h264dec_stream(NULL, 0);
+	buf.index = 1;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+	cut_assert_equal_int(-1, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+	cut_assert_equal_int(EINVAL, errno);
+	buf.index = 2;
+	cut_assert_equal_int(-1, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+	cut_assert_equal_int(EBUSY, errno);
+	gst_mini_object_weak_ref(GST_MINI_OBJECT(backend->out.buffers[1].gstbuf),
+		mark_eos_buffer_freed, &freed);
+	libv4l2_plugin.close(backend);
+	backend = NULL;
+	cut_assert(freed);
 }

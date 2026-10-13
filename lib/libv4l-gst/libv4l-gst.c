@@ -20,9 +20,11 @@
 #include "config.h"
 
 #include <errno.h>
+#include <sys/mman.h>
 #include <libv4l-plugin.h>
 
 #include "v4l-gst.h"
+#include "v4l-gst-internal.h"
 #include "debug.h"
 
 #if HAVE_VISIBILITY
@@ -61,6 +63,9 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 	int ret = -1;
 
 	(void)fd; /* unused */
+
+	if (!v4l_gst_core_enter_operation(priv))
+		goto out;
 
 	switch (cmd) {
 	case VIDIOC_QUERYCAP:
@@ -141,6 +146,9 @@ static int plugin_ioctl(void *dev_ops_priv, int fd,
 		break;
 	}
 
+out:
+	v4l_gst_core_leave_operation(priv);
+
 	return ret;
 }
 
@@ -149,8 +157,19 @@ plugin_mmap(void *dev_ops_priv, void *start, size_t length, int prot,
 	    int flags, int fd, int64_t offset)
 {
 	struct v4l_gst *priv = dev_ops_priv;
-	return v4l_gst_mmap(priv, start, length, prot, flags, fd,
-				offset);
+	void *ret;
+
+	if (!v4l_gst_core_enter_operation(priv)) {
+		ret = MAP_FAILED;
+		goto out;
+	}
+
+	ret = v4l_gst_mmap(priv, start, length, prot, flags, fd, offset);
+
+out:
+	v4l_gst_core_leave_operation(priv);
+
+	return ret;
 }
 
 PLUGIN_PUBLIC const struct libv4l_dev_ops libv4l2_plugin = {

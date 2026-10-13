@@ -852,6 +852,12 @@ v4l_gst_core_push_source_change_event(struct v4l_gst *priv)
 void
 v4l_gst_core_set_pipeline_started(struct v4l_gst *priv, gboolean started)
 {
+	/* Once the plugin is shutting down the pipeline can never start
+	   again, so that interruptible waits cannot re-enter a sleep while
+	   v4l_gst_deinit() is draining them. */
+	if (started && g_atomic_int_get(&priv->shutting_down))
+		started = FALSE;
+
 	g_mutex_lock(&priv->cap.reqbuf_mutex);
 	priv->cap.cancel_reqbuf_wait = !started;
 	if (!started)
@@ -863,6 +869,30 @@ v4l_gst_core_set_pipeline_started(struct v4l_gst *priv, gboolean started)
 	if (!started)
 		g_cond_broadcast(&priv->queue_cond);
 	g_mutex_unlock(&priv->queue_mutex);
+}
+
+
+gboolean
+v4l_gst_core_enter_operation(struct v4l_gst *priv)
+{
+	/* Count this call as in-flight so that v4l_gst_deinit() can wait
+	   until no other thread is inside the plugin before freeing state.
+	   The caller must always pair this with v4l_gst_core_leave_operation()
+	   regardless of the return value. */
+	g_atomic_int_inc(&priv->inflight_ioctls);
+	if (g_atomic_int_get(&priv->shutting_down)) {
+		errno = EBUSY;
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+void
+v4l_gst_core_leave_operation(struct v4l_gst *priv)
+{
+	g_atomic_int_dec_and_test(&priv->inflight_ioctls);
 }
 
 
@@ -1089,14 +1119,156 @@ v4l_gst_init(int fd)
 }
 
 
+/*
+ * The helpers below implement the "quiet" phase of the shutdown.  They
+ * are guards for applications that close the file descriptor without
+ * following the expected sequence (sending DECODER_CMD STOP, STREAMOFF,
+ * returning all dequeued buffers and finishing their own threads).
+ * For a well-behaved application each of them is a no-op.
+ */
+
+/*
+ * Guard for applications that close without returning the buffers they
+ * dequeued: drop the references held on their behalf.  The blocked
+ * streaming threads that this situation produces are woken up by
+ * inactivate_buffer_pools(); this helper runs after the drain, so that
+ * it cannot race with a client thread still touching its buffers.
+ */
+static void
+return_client_buffers_to_pools(struct v4l_gst *priv)
+{
+	gint i;
+
+	if (priv->cap.buffers) {
+		for (i = 0; i < priv->cap.buffers_num; i++) {
+			if (priv->cap.buffers[i].state ==
+			    V4L_GST_BUFFER_DEQUEUED) {
+				gst_buffer_unref(priv->cap.buffers[i].gstbuf);
+				priv->cap.buffers[i].state =
+					V4L_GST_BUFFER_QUEUED;
+			}
+		}
+	}
+	if (priv->out.buffers) {
+		for (i = 0; i < priv->out.buffers_num; i++) {
+			if (priv->out.buffers[i].state ==
+			    V4L_GST_BUFFER_DEQUEUED) {
+				gst_buffer_unref(priv->out.buffers[i].gstbuf);
+				priv->out.buffers[i].state =
+					V4L_GST_BUFFER_QUEUED;
+			}
+		}
+	}
+}
+
+/*
+ * Guard for applications that close without STREAMOFF.  Inactivating the
+ * pools wakes up threads blocked in gst_buffer_pool_acquire_buffer():
+ * client threads on OUTPUT and streaming threads on CAPTURE.
+ */
+static void
+inactivate_buffer_pools(struct v4l_gst *priv)
+{
+	if (priv->out.pool && gst_buffer_pool_is_active(priv->out.pool)) {
+		if (!gst_buffer_pool_set_active(priv->out.pool, FALSE))
+			GST_WARNING("Failed to inactivate the OUTPUT "
+				    "buffer pool");
+	}
+	if (priv->cap.pool && gst_buffer_pool_is_active(priv->cap.pool)) {
+		if (!gst_buffer_pool_set_active(priv->cap.pool, FALSE))
+			GST_WARNING("Failed to inactivate the CAPTURE "
+				    "buffer pool");
+	}
+}
+
+/*
+ * Guard for applications that close while the pipeline is still running,
+ * i.e. without STREAMOFF or DECODER_CMD STOP.  Normally the pipeline is
+ * already stopped at this point; if it is not, stop it so that no streaming
+ * thread, pad probe or appsink callback can touch the plugin state anymore.
+ * NULL transitions are synchronous: only an unexpected ASYNC result has
+ * a bounded completion wait, not set_state(NULL) itself.
+ */
+static void
+stop_pipeline_for_shutdown(struct v4l_gst *priv)
+{
+	GstStateChangeReturn state_ret;
+	gint64 deadline;
+
+	if (!priv->pipeline)
+		return;
+
+	state_ret = gst_element_set_state(priv->pipeline, GST_STATE_NULL);
+	if (state_ret == GST_STATE_CHANGE_ASYNC) {
+		deadline = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+		do {
+			state_ret = gst_element_get_state(priv->pipeline,
+							  NULL, NULL,
+							  GST_SECOND);
+		} while (state_ret == GST_STATE_CHANGE_ASYNC &&
+			 g_get_monotonic_time() < deadline);
+	}
+	if (state_ret != GST_STATE_CHANGE_SUCCESS) {
+		GST_WARNING("Failed to stop the pipeline cleanly (ret:%s)",
+			    gst_element_state_change_return_get_name(state_ret));
+	}
+}
+
+/*
+ * Guard for applications that close while their own threads are still
+ * inside an ioctl or mmap.  All interruptible waits bail out on
+ * shutting_down, so this drain is bounded; the timeout is only a safety
+ * net.
+ */
+static void
+drain_inflight_operations(struct v4l_gst *priv)
+{
+	gint64 deadline;
+
+	deadline = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+	while (g_atomic_int_get(&priv->inflight_ioctls) > 0) {
+		if (g_get_monotonic_time() >= deadline) {
+			GST_WARNING("Timed out draining in-flight ioctls "
+				    "(%d still running)",
+				    g_atomic_int_get(&priv->inflight_ioctls));
+			break;
+		}
+		g_usleep(1000);
+	}
+}
+
 void
 v4l_gst_deinit(struct v4l_gst *priv)
 {
 	GST_DEBUG("v4l_gst_deinit start");
 
+	/* Reject new ioctls and wake up all interruptible waits so that
+	   client threads leave their ioctl handlers. */
+	g_atomic_int_set(&priv->shutting_down, 1);
 	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
-	g_mutex_clear(&priv->dev_lock);
+	/* Make the plugin quiet before freeing anything.  Each step below
+	   is a guard for applications that skipped the corresponding part
+	   of the normal shutdown sequence; see the helper comments.
+	   First wake pool acquisitions before taking dev_lock: a blocked
+	   OUTPUT ioctl may hold that lock. Repeat inactivation under the
+	   lock, in case an already-running ioctl reactivated a pool. */
+	inactivate_buffer_pools(priv);
+	g_mutex_lock(&priv->dev_lock);
+	inactivate_buffer_pools(priv);
+	stop_pipeline_for_shutdown(priv);
+	g_mutex_unlock(&priv->dev_lock);
+	drain_inflight_operations(priv);
+	return_client_buffers_to_pools(priv);
+	/* An empty OUTPUT QBUF may never receive EOS (e.g. close before
+	   STREAMON). Its acquired reference is still owned by this cache. */
+	if (priv->eos_gstbuf) {
+		gst_buffer_unref(priv->eos_gstbuf);
+		priv->eos_gstbuf = NULL;
+	}
+
+	/* From here on no other thread references the plugin state, so it
+	   is safe to remove probes, free shared objects and clear mutexes. */
 
 	if (priv->v4l2events.queue) {
 		g_queue_free_full(priv->v4l2events.queue,
@@ -1156,6 +1328,8 @@ v4l_gst_deinit(struct v4l_gst *priv)
 	g_free(priv->config.pool_lib_path);
 
 	delete_event_state(priv->event_state);
+
+	g_mutex_clear(&priv->dev_lock);
 
 	g_free(priv);
 
