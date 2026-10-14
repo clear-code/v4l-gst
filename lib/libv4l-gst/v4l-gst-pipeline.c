@@ -352,12 +352,17 @@ static void
 appsink_callback_eos(GstAppSink *appsink, gpointer user_data)
 {
 	struct v4l_gst *priv = user_data;
-	if (priv->eos_gstbuf)
+	if (priv->eos_gstbuf) {
 		v4l_gst_buf_release_out_buffer(priv, priv->eos_gstbuf);
+		priv->eos_gstbuf = NULL;
+	}
 	g_mutex_lock(&priv->queue_mutex);
 	GST_DEBUG("EOS: Got from AppSink. Cached buffers: %u",
 		  g_queue_get_length(priv->cap.gstbufs_queue));
 	priv->eos_state = EOS_GOT;
+	/* Wake up waiters that stop early once the stream has ended,
+	   e.g. wait_for_bufs_collected(). */
+	g_cond_signal(&priv->queue_cond);
 	if (priv->cap.gstbufs_queue &&
 	    !g_queue_is_empty(priv->cap.gstbufs_queue)) {
 		set_event(priv->event_state, POLLOUT);
@@ -587,6 +592,7 @@ int
 v4l_gst_pipeline_stop(struct v4l_gst *priv)
 {
 	GstStateChangeReturn state_ret;
+	gint64 deadline;
 	int ret = 0;
 	gint i;
 
@@ -594,15 +600,30 @@ v4l_gst_pipeline_stop(struct v4l_gst *priv)
 
 	v4l_gst_core_set_pipeline_started(priv, FALSE);
 
+	/* Guard for applications that stop the pipeline while still holding
+	   all dequeued CAPTURE buffers: a streaming thread blocked in
+	   gst_buffer_pool_acquire_buffer() would keep the pipeline from
+	   reaching GST_STATE_NULL forever.  Flushing the pools wakes up
+	   blocked acquisitions. */
+	if (priv->out.pool)
+		gst_buffer_pool_set_flushing(priv->out.pool, TRUE);
+	if (priv->cap.pool)
+		gst_buffer_pool_set_flushing(priv->cap.pool, TRUE);
+
 	state_ret = gst_element_set_state(priv->pipeline,
 					  GST_STATE_NULL);
-	while (state_ret == GST_STATE_CHANGE_ASYNC) {
-		/* This API blocks up to the ASYNC state change completion. */
-		g_mutex_unlock(&priv->dev_lock);
-		state_ret = gst_element_get_state(priv->pipeline, NULL,
-						  NULL,
-						  GST_CLOCK_TIME_NONE);
-		g_mutex_lock(&priv->dev_lock);
+	if (state_ret == GST_STATE_CHANGE_ASYNC) {
+		/* Bound the wait: a state change that cannot complete
+		   within the timeout is reported instead of hanging. */
+		deadline = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
+		do {
+			g_mutex_unlock(&priv->dev_lock);
+			state_ret = gst_element_get_state(priv->pipeline, NULL,
+							  NULL,
+							  1 * G_TIME_SPAN_SECOND);
+			g_mutex_lock(&priv->dev_lock);
+		} while (state_ret == GST_STATE_CHANGE_ASYNC &&
+			 g_get_monotonic_time() < deadline);
 	}
 
 	if (state_ret != GST_STATE_CHANGE_SUCCESS) {
@@ -638,6 +659,13 @@ v4l_gst_pipeline_stop(struct v4l_gst *priv)
 	}
 	priv->cap.buffers_num = 0;
 	v4l_gst_fmt_init_decoded_frame_params(&priv->cap.fmt);
+
+	/* The next streaming cycle must start without the flushing state
+	   that was used to wake up the blocked acquisitions above. */
+	if (priv->out.pool)
+		gst_buffer_pool_set_flushing(priv->out.pool, FALSE);
+	if (priv->cap.pool)
+		gst_buffer_pool_set_flushing(priv->cap.pool, FALSE);
 
 	return ret;
 }

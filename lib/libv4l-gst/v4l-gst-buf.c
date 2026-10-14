@@ -174,7 +174,11 @@ qbuf_ioctl_out(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 		memset(&buffer->info, 0, sizeof(buffer->info));
 
 		buffer->state = V4L_GST_BUFFER_QUEUED;
-		priv->eos_gstbuf = buffer->gstbuf;
+		/* Hold an extra reference: the buffer is released when the
+		   EOS event arrives (appsink_callback_eos), and the base
+		   reference of the OUTPUT buffer must stay valid until the
+		   buffer is freed. */
+		priv->eos_gstbuf = gst_buffer_ref(buffer->gstbuf);
 
 		return 0;
 	}
@@ -467,10 +471,16 @@ dequeue_blocking(struct v4l_gst *priv, GQueue *queue, GCond *cond)
 {
 	GstBuffer *gstbuf;
 
-        gstbuf = g_queue_pop_head(queue);
-	while (!gstbuf && priv->is_pipeline_started) {
+	gstbuf = g_queue_pop_head(queue);
+	while (!gstbuf && priv->is_pipeline_started &&
+	       !g_atomic_int_get(&priv->shutting_down)) {
 		g_cond_wait(cond, &priv->queue_mutex);
 		gstbuf = g_queue_pop_head(queue);
+	}
+	if (!gstbuf && g_atomic_int_get(&priv->shutting_down)) {
+		/* Streaming is being stopped by v4l_gst_deinit(); report it
+		   the same way a real device does after STREAMOFF. */
+		errno = EPERM;
 	}
 
 	return gstbuf;
@@ -1269,19 +1279,27 @@ peek_first_cap_buffer(struct v4l_gst *priv)
 }
 
 
-static gboolean
-wait_for_all_bufs_collected(struct v4l_gst *priv,
-			    guint max_buffers)
+/*
+ * Waits until max_buffers buffers are collected from appsink, or until
+ * the stream ends (EOS), whichever comes first.  A stream shorter than
+ * the buffer pool would otherwise stall this until the timeout expires
+ * and VIDIOC_REQBUF would fail even though the decoder worked
+ * correctly.  Returns the number of buffers actually collected.
+ */
+static guint
+wait_for_bufs_collected(struct v4l_gst *priv,
+			guint max_buffers)
 {
 	GQueue *queue = priv->out.gstbufs_queue;
-	gboolean succeeded;
+	guint collected;
 	gboolean timed_out = FALSE;
 	gint64 end_time;
 
 	g_mutex_lock(&priv->queue_mutex);
 	end_time = g_get_monotonic_time() + INITIAL_BUFFER_WAIT_TIMEOUT;
 	while (g_queue_get_length(queue) < max_buffers &&
-	       priv->is_pipeline_started) {
+	       priv->is_pipeline_started &&
+	       priv->eos_state != EOS_GOT) {
 		if (!g_cond_wait_until(&priv->queue_cond,
 				       &priv->queue_mutex,
 				       end_time)) {
@@ -1289,13 +1307,14 @@ wait_for_all_bufs_collected(struct v4l_gst *priv,
 			break;
 		}
 	}
-	succeeded = g_queue_get_length(queue) >= max_buffers;
+	collected = g_queue_get_length(queue);
 	g_mutex_unlock(&priv->queue_mutex);
 
-	if (timed_out && !succeeded)
-		GST_WARNING("Timed out waiting CAPTURE buffers.");
+	if (timed_out && collected < max_buffers)
+		GST_WARNING("Timed out waiting CAPTURE buffers "
+			    "(collected %u of %u).", collected, max_buffers);
 
-	return succeeded;
+	return collected;
 }
 
 
@@ -1333,8 +1352,8 @@ create_cap_buffers_list(struct v4l_gst *priv)
 {
 	GstBuffer *first_gstbuf;
 	guint actual_max_buffers;
+	guint collected;
 	gint i, j;
-	gboolean succeeded;
 
 	if (priv->cap.buffers)
 		/* Cannot realloc the buffers without stopping the pipeline,
@@ -1399,13 +1418,24 @@ create_cap_buffers_list(struct v4l_gst *priv)
 	/* We wait for buffers from appsink to be collected for
 	   the maximum number of the buffer pool. */
 	g_mutex_unlock(&priv->dev_lock);
-	succeeded = wait_for_all_bufs_collected(priv, actual_max_buffers);
+	collected = wait_for_bufs_collected(priv, actual_max_buffers);
 	g_mutex_lock(&priv->dev_lock);
 
-	if (!succeeded) {
+	if (collected == 0) {
 		GST_ERROR("Failed to collect buffers for CAPTURE.");
 		errno = EINVAL;
 		return 0;
+	}
+
+	if (collected < actual_max_buffers) {
+		/* The stream produced fewer frames than the buffer pool
+		   holds (e.g. a short stream or an EOS).  Use what we
+		   have; VIDIOC_REQBUF is allowed to return fewer buffers
+		   than requested. */
+		GST_DEBUG("The stream produced only %u of %u buffers; "
+			  "using %u", collected, actual_max_buffers,
+			  collected);
+		actual_max_buffers = collected;
 	}
 
 	priv->cap.buffers = g_new0(struct v4l_gst_buffer, actual_max_buffers);
@@ -1544,6 +1574,12 @@ streamon_ioctl_out(struct v4l_gst *priv)
 		gst_buffer_unref(priv->out.buffers[0].gstbuf);
 	}
 
+	/* Release a buffer cached by a previous QBUF(bytesused=0) whose
+	   EOS event never arrived, e.g. because of a STREAMOFF. */
+	if (priv->eos_gstbuf) {
+		gst_buffer_unref(priv->eos_gstbuf);
+		priv->eos_gstbuf = NULL;
+	}
 	priv->eos_state = EOS_NONE;
 	v4l_gst_core_reset_cap_timestamp_state(priv);
 

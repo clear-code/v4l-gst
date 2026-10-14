@@ -189,6 +189,19 @@ struct v4l_gst {
 		GQueue *queue;
 	} v4l2events;
 
+	/*
+	 * Shutdown coordination, accessed only through g_atomic_int_*():
+	 *
+	 * shutting_down   : set once by v4l_gst_deinit() before freeing any
+	 *                   shared state; interruptible waits and new ioctls
+	 *                   bail out when it is set.
+	 * inflight_ioctls : number of client threads currently inside a
+	 *                   plugin ioctl/mmap entry; v4l_gst_deinit() waits
+	 *                   for it to drop to 0 before freeing shared state.
+	 */
+	volatile gint shutting_down;
+	volatile gint inflight_ioctls;
+
 	GMutex dev_lock;
 };
 
@@ -216,6 +229,8 @@ void	      v4l_gst_core_push_source_change_event	   (struct v4l_gst *priv);
 void	      v4l_gst_core_reset_cap_timestamp_state	   (struct v4l_gst *priv);
 void	      v4l_gst_core_set_pipeline_started		   (struct v4l_gst *priv,
 							    gboolean started);
+gboolean      v4l_gst_core_enter_operation		   (struct v4l_gst *priv);
+void	      v4l_gst_core_leave_operation		   (struct v4l_gst *priv);
 
 /* pipeline */
 GstCaps *     v4l_gst_pipeline_get_codec_caps_from_fourcc  (guint fourcc);
