@@ -1129,9 +1129,10 @@ v4l_gst_init(int fd)
 
 /*
  * Guard for applications that close without returning the buffers they
- * dequeued.  A streaming thread blocked in gst_buffer_pool_acquire_buffer()
- * because the client kept all the buffers would otherwise never finish and
- * gst_element_set_state(GST_STATE_NULL) would block forever.
+ * dequeued: drop the references held on their behalf.  The blocked
+ * streaming threads that this situation produces are woken up by
+ * inactivate_buffer_pools(); this helper runs after the drain, so that
+ * it cannot race with a client thread still touching its buffers.
  */
 static void
 return_client_buffers_to_pools(struct v4l_gst *priv)
@@ -1247,11 +1248,15 @@ v4l_gst_deinit(struct v4l_gst *priv)
 
 	/* Make the plugin quiet before freeing anything.  Each step below
 	   is a guard for applications that skipped the corresponding part
-	   of the normal shutdown sequence; see the helper comments. */
-	return_client_buffers_to_pools(priv);
+	   of the normal shutdown sequence; see the helper comments.
+	   The first three steps only touch thread-safe GStreamer objects
+	   and wake up blocked threads; the step that modifies the plugin
+	   state (return_client_buffers_to_pools) runs after the drain,
+	   when no other thread is inside the plugin. */
 	inactivate_buffer_pools(priv);
 	stop_pipeline_bounded(priv);
 	drain_inflight_operations(priv);
+	return_client_buffers_to_pools(priv);
 
 	/* From here on no other thread references the plugin state, so it
 	   is safe to remove probes, free shared objects and clear mutexes. */
