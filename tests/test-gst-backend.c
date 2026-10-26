@@ -18,6 +18,8 @@ static gchar *config_path;
 static gchar *old_xdg_config_dirs;
 static gboolean had_xdg_config_dirs;
 
+static GLogLevelFlags old_always_fatal;
+
 struct querycap_result {
 	int ret;
 	guint32 device_caps;
@@ -62,6 +64,46 @@ assert_equal_result_strings(const gchar *expected, const gchar *actual)
 				cut_message("%s", cut_take_diff(expected, actual)));
 }
 
+struct test_result_strings {
+	GString *expected;
+	GString *actual;
+};
+
+static void
+test_result_strings_init(struct test_result_strings *result)
+{
+	result->expected = g_string_new(NULL);
+	result->actual = g_string_new(NULL);
+}
+
+static void
+test_result_strings_add_int(struct test_result_strings *result,
+			    const gchar *name, gint64 expected, gint64 actual)
+{
+	g_string_append_printf(result->expected, "%s=%" G_GINT64_FORMAT "\n",
+			       name, expected);
+	g_string_append_printf(result->actual, "%s=%" G_GINT64_FORMAT "\n",
+			       name, actual);
+}
+
+static void
+test_result_strings_add_uint(struct test_result_strings *result,
+			     const gchar *name, guint64 expected, guint64 actual)
+{
+	g_string_append_printf(result->expected, "%s=%" G_GUINT64_FORMAT "\n",
+			       name, expected);
+	g_string_append_printf(result->actual, "%s=%" G_GUINT64_FORMAT "\n",
+			       name, actual);
+}
+
+static void
+test_result_strings_assert(struct test_result_strings *result)
+{
+	assert_equal_result_strings(result->expected->str, result->actual->str);
+	g_string_free(result->expected, TRUE);
+	g_string_free(result->actual, TRUE);
+}
+
 static int
 v4l_gst_ioctl(unsigned long int cmd, void *arg)
 {
@@ -92,6 +134,10 @@ cut_startup(void)
 	had_xdg_config_dirs = g_getenv("XDG_CONFIG_DIRS") != NULL;
 	old_xdg_config_dirs = g_strdup(g_getenv("XDG_CONFIG_DIRS"));
 	g_setenv("XDG_CONFIG_DIRS", config_dir, TRUE);
+
+	/* A critical during a test or teardown must fail the test process,
+	   regardless of its GLib log domain. */
+	old_always_fatal = g_log_set_always_fatal(G_LOG_LEVEL_CRITICAL);
 }
 
 void
@@ -114,6 +160,7 @@ teardown(void)
 	if (backend)
 		libv4l2_plugin.close(backend);
 	backend = NULL;
+
 	if (backend_fd >= 0)
 		close(backend_fd);
 	backend_fd = -1;
@@ -140,6 +187,7 @@ cut_shutdown(void)
 		g_rmdir(config_dir);
 	g_free(config_dir);
 	config_dir = NULL;
+	g_log_set_always_fatal(old_always_fatal);
 }
 
 void
@@ -2311,4 +2359,867 @@ test_h264dec_close_releases_pending_eos_buffer(void)
 	libv4l2_plugin.close(backend);
 	backend = NULL;
 	cut_assert(freed);
+}
+
+/* ------------------------------------------------------------------ */
+/* Control ioctls: QUERYCTRL / QUERYMENU / G_CTRL / G_EXT_CTRLS        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Re-point the decode pipeline at a different codec fourcc and re-derive
+ * the role so that codec_pipeline_enabled() reflects the change. This lets
+ * the control tests exercise both the "pipeline enabled" and "disabled"
+ * branches without needing a real decoder for the alternate codec.
+ */
+static void
+set_decode_pipeline_fourcc(const gchar *fourcc)
+{
+	g_hash_table_remove(backend->config.pipelines, "H264");
+	g_hash_table_insert(backend->config.pipelines, g_strdup(fourcc),
+			    g_strdup("identity"));
+	v4l_gst_core_setup_role(backend);
+}
+
+/*
+ * Allocate OUTPUT buffers without starting the pipeline. The default format
+ * fixture creates a bare identity pipeline without a buffer pool, so the pool
+ * is built by re-initialising the (reset) pipeline through S_FMT, exactly as
+ * the streaming tests do, before REQBUFS can allocate from it. A real decoder
+ * pipeline is used because the identity stub exposes no usable caps.
+ */
+static guint
+prepare_out_buffers(guint count)
+{
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	const guint32 w = 320;
+	const guint32 h = 240;
+	const guint32 frame_size = w * h * 3 / 2;
+	const guint32 stream_sizeimage = 64 * 1024;
+
+	prepare_pipeline_backend_fixture(backend, V4L_GST_ROLE_DECODER,
+					 "h264parse ! avdec_h264 ! videoconvert",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, stream_sizeimage);
+	assert_role(V4L_GST_ROLE_DECODER);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = stream_sizeimage;
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_S_FMT, &format));
+
+	req.count = count;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_REQBUFS, &req));
+	cut_assert(req.count >= 1);
+	return req.count;
+}
+
+void
+test_queryctrl_h264_profile_decoder_role(void)
+{
+	struct test_result_strings result;
+	struct v4l2_queryctrl qc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	assert_role(V4L_GST_ROLE_DECODER);
+	qc.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYCTRL, &qc);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_uint(&result, "minimum",
+				     V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
+				     qc.minimum);
+	test_result_strings_add_uint(&result, "maximum",
+				     V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10,
+				     qc.maximum);
+	test_result_strings_assert(&result);
+}
+
+void
+test_queryctrl_h264_profile_rejected_when_pipeline_disabled(void)
+{
+	struct test_result_strings result;
+	struct v4l2_queryctrl qc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	set_decode_pipeline_fourcc("HEVC");
+	assert_role(V4L_GST_ROLE_DECODER);
+
+	qc.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYCTRL, &qc);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_queryctrl_hevc_profile_decoder_role(void)
+{
+	struct test_result_strings result;
+	struct v4l2_queryctrl qc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	set_decode_pipeline_fourcc("HEVC");
+
+	qc.id = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYCTRL, &qc);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_uint(&result, "minimum",
+				     V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
+				     qc.minimum);
+	test_result_strings_add_uint(&result, "maximum",
+				     V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10,
+				     qc.maximum);
+	test_result_strings_assert(&result);
+}
+
+void
+test_queryctrl_unknown_id_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_queryctrl qc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	qc.id = V4L2_CID_BRIGHTNESS;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYCTRL, &qc);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_querymenu_h264_profile_indexes(void)
+{
+	struct test_result_strings result;
+	const guint32 valid[] = {
+		V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
+		V4L2_MPEG_VIDEO_H264_PROFILE_MAIN,
+		V4L2_MPEG_VIDEO_H264_PROFILE_HIGH,
+		V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10,
+	};
+	struct v4l2_querymenu qm = { 0, };
+	guint i;
+	int ret;
+	test_result_strings_init(&result);
+
+	for (i = 0; i < G_N_ELEMENTS(valid); i++) {
+		qm.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+		qm.index = valid[i];
+		test_result_strings_add_uint(&result, "valid_index", valid[i],
+					     qm.index);
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QUERYMENU, &qm);
+		test_result_strings_add_int(&result, "valid_index_ret", 0, ret);
+	}
+
+	/* 1 (CONSTRAINED_BASELINE) is not a supported index. */
+	qm.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE;
+	qm.index = 1;
+	test_result_strings_add_uint(&result, "invalid_index", 1, qm.index);
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYMENU, &qm);
+	test_result_strings_add_int(&result, "invalid_index_ret", -1, ret);
+	test_result_strings_add_int(&result, "invalid_index_errno", EINVAL,
+				     errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_querymenu_hevc_profile_indexes(void)
+{
+	struct test_result_strings result;
+	const guint32 valid[] = {
+		V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
+		V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE,
+		V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10,
+	};
+	struct v4l2_querymenu qm = { 0, };
+	guint i;
+	int ret;
+	test_result_strings_init(&result);
+
+	for (i = 0; i < G_N_ELEMENTS(valid); i++) {
+		qm.id = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;
+		qm.index = valid[i];
+		test_result_strings_add_uint(&result, "valid_index", valid[i],
+					     qm.index);
+		errno = 0;
+		ret = v4l_gst_ioctl(VIDIOC_QUERYMENU, &qm);
+		test_result_strings_add_int(&result, "valid_index_ret", 0, ret);
+	}
+
+	/* 3 is not a defined HEVC profile. */
+	qm.id = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE;
+	qm.index = 3;
+	test_result_strings_add_uint(&result, "invalid_index", 3, qm.index);
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYMENU, &qm);
+	test_result_strings_add_int(&result, "invalid_index_ret", -1, ret);
+	test_result_strings_add_int(&result, "invalid_index_errno", EINVAL,
+				     errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_g_ctrl_min_buffers_default(void)
+{
+	struct test_result_strings result;
+	struct v4l2_control ctrl = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	ctrl.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_CTRL, &ctrl);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_int(&result, "value", DEF_CAP_MIN_BUFFERS,
+				     ctrl.value);
+	test_result_strings_assert(&result);
+}
+
+void
+test_g_ctrl_unknown_id_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_control ctrl = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	ctrl.id = V4L2_CID_BRIGHTNESS;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_CTRL, &ctrl);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_g_ext_ctrls_returns_min_buffers(void)
+{
+	struct test_result_strings result;
+	struct v4l2_ext_controls ext = { 0, };
+	struct v4l2_ext_control ctrl = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	ctrl.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
+	ext.count = 1;
+	ext.controls = &ctrl;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_EXT_CTRLS, &ext);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_int(&result, "value", DEF_CAP_MIN_BUFFERS,
+				     ctrl.value);
+	test_result_strings_assert(&result);
+}
+
+void
+test_g_ext_ctrls_rejects_unknown_id(void)
+{
+	struct test_result_strings result;
+	struct v4l2_ext_controls ext = { 0, };
+	struct v4l2_ext_control ctrl[2] = { { 0, }, { 0, } };
+	int ret;
+	test_result_strings_init(&result);
+
+	ctrl[0].id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
+	ctrl[1].id = V4L2_CID_BRIGHTNESS;
+	ext.count = 2;
+	ext.controls = ctrl;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_EXT_CTRLS, &ext);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+/* ------------------------------------------------------------------ */
+/* Event ioctls: SUBSCRIBE_EVENT / DQEVENT / UNSUBSCRIBE_EVENT         */
+/* ------------------------------------------------------------------ */
+
+void
+test_subscribe_event_source_change_accepted(void)
+{
+	struct v4l2_event_subscription sub = { 0, };
+	int ret;
+
+	sub.type = V4L2_EVENT_SOURCE_CHANGE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_SUBSCRIBE_EVENT, &sub);
+	cut_assert_equal_int(0, ret);
+}
+
+void
+test_subscribe_event_unsupported_type_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_event_subscription sub = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	sub.type = V4L2_EVENT_EOS;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_SUBSCRIBE_EVENT, &sub);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", ENOTTY, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_dqevent_returns_source_change_then_eagain(void)
+{
+	struct test_result_strings result;
+	struct v4l2_event_subscription sub = { 0, };
+	struct v4l2_event ev = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	sub.type = V4L2_EVENT_SOURCE_CHANGE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_SUBSCRIBE_EVENT, &sub);
+	test_result_strings_add_int(&result, "subscribe_ret", 0, ret);
+
+	v4l_gst_core_push_source_change_event(backend);
+
+	memset(&ev, 0, sizeof(ev));
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_DQEVENT, &ev);
+	test_result_strings_add_int(&result, "first_dqevent_ret", 0, ret);
+	test_result_strings_add_uint(&result, "event_type",
+				     V4L2_EVENT_SOURCE_CHANGE, ev.type);
+	test_result_strings_add_uint(&result, "sequence", 1, ev.sequence);
+	test_result_strings_add_uint(&result, "pending", 0, ev.pending);
+
+	/* The queue is now empty. */
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_DQEVENT, &ev);
+	test_result_strings_add_int(&result, "empty_dqevent_ret", -1, ret);
+	test_result_strings_add_int(&result, "empty_dqevent_errno", EAGAIN,
+				     errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_dqevent_without_subscription_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_event_subscription sub = { 0, };
+	struct v4l2_event ev = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	/* A pending event exists but there is no subscription: it must
+	 * not be delivered. */
+	v4l_gst_core_push_source_change_event(backend);
+	memset(&ev, 0, sizeof(ev));
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_DQEVENT, &ev);
+	test_result_strings_add_int(&result, "unsubscribed_dqevent_ret", -1,
+				     ret);
+	test_result_strings_add_int(&result, "unsubscribed_dqevent_errno",
+				     EINVAL, errno);
+
+	/* Once subscribed, the pending event is delivered. */
+	sub.type = V4L2_EVENT_SOURCE_CHANGE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_SUBSCRIBE_EVENT, &sub);
+	test_result_strings_add_int(&result, "subscribe_ret", 0, ret);
+	memset(&ev, 0, sizeof(ev));
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_DQEVENT, &ev);
+	test_result_strings_add_int(&result, "subscribed_dqevent_ret", 0, ret);
+	test_result_strings_add_uint(&result, "event_type",
+				     V4L2_EVENT_SOURCE_CHANGE, ev.type);
+	test_result_strings_assert(&result);
+}
+
+void
+test_unsubscribe_event_all_clears_subscription(void)
+{
+	struct test_result_strings result;
+	struct v4l2_event_subscription sub = { 0, };
+	struct v4l2_event ev = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	sub.type = V4L2_EVENT_SOURCE_CHANGE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_SUBSCRIBE_EVENT, &sub);
+	test_result_strings_add_int(&result, "subscribe_ret", 0, ret);
+	v4l_gst_core_push_source_change_event(backend);
+
+	sub.type = V4L2_EVENT_ALL;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_UNSUBSCRIBE_EVENT, &sub);
+	test_result_strings_add_int(&result, "unsubscribe_ret", 0, ret);
+
+	/* No longer subscribed: the pending event is not delivered. */
+	memset(&ev, 0, sizeof(ev));
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_DQEVENT, &ev);
+	test_result_strings_add_int(&result, "dqevent_ret", -1, ret);
+	test_result_strings_add_int(&result, "dqevent_errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+/* ------------------------------------------------------------------ */
+/* mmap / EXPBUF / G_SELECTION                                         */
+/* ------------------------------------------------------------------ */
+
+void
+test_mmap_out_buffer_roundtrip(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	void *map;
+	guint8 *p;
+	gsize length;
+	guint i;
+	gboolean ok;
+	int ret;
+	test_result_strings_init(&result);
+
+	prepare_out_buffers(2);
+
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	cut_assert_equal_int(0, ret);
+	length = buf.m.planes[0].length;
+	cut_assert(length > 0);
+
+	map = libv4l2_plugin.mmap(backend, NULL, length,
+				  PROT_READ | PROT_WRITE, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert(map != MAP_FAILED);
+	p = map;
+	for (i = 0; i < length; i++)
+		p[i] = (guint8) (i & 0xff);
+	munmap(map, length);
+
+	/* Remap read-only and verify the written pattern survives. */
+	map = libv4l2_plugin.mmap(backend, NULL, length,
+				  PROT_READ, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert(map != MAP_FAILED);
+	ok = TRUE;
+	for (i = 0; i < length; i++)
+		if (((guint8 *) map)[i] != (guint8) (i & 0xff))
+			ok = FALSE;
+	test_result_strings_add_int(&result, "pattern_roundtrip", 1, ok);
+	munmap(map, length);
+	test_result_strings_assert(&result);
+}
+
+void
+test_mmap_invalid_offset_returns_map_failed(void)
+{
+	void *map;
+
+	prepare_out_buffers(2);
+
+	/* An offset that matches no allocated buffer must fail. */
+	map = libv4l2_plugin.mmap(backend, NULL, 4096, PROT_READ,
+				  MAP_SHARED, -1, 12345);
+	cut_assert(map == MAP_FAILED);
+}
+
+void
+test_expbuf_rejects_output_buffer(void)
+{
+	struct test_result_strings result;
+	struct v4l2_exportbuffer expbuf = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	/* OUTPUT buffers cannot be exported as dmabuf. */
+	expbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	expbuf.index = 0;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_EXPBUF, &expbuf);
+	test_result_strings_add_int(&result, "output_ret", -1, ret);
+	test_result_strings_add_int(&result, "output_errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_expbuf_rejects_capture_without_buffers(void)
+{
+	struct test_result_strings result;
+	struct v4l2_exportbuffer expbuf = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	/* With no CAPTURE buffers allocated, any index is out of range. */
+	expbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_EXPBUF, &expbuf);
+	test_result_strings_add_int(&result, "capture_ret", -1, ret);
+	test_result_strings_add_int(&result, "capture_errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_g_selection_returns_capture_format(void)
+{
+	struct test_result_strings result;
+	struct v4l2_selection sel = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	sel.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	sel.target = V4L2_SEL_TGT_CROP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_SELECTION, &sel);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_uint(&result, "left", 0, sel.r.left);
+	test_result_strings_add_uint(&result, "top", 0, sel.r.top);
+	test_result_strings_add_uint(&result, "width", 640, sel.r.width);
+	test_result_strings_add_uint(&result, "height", 480, sel.r.height);
+	test_result_strings_assert(&result);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buffer state machine: QBUF / STREAMON / QUERYBUF error paths        */
+/* ------------------------------------------------------------------ */
+
+void
+test_qbuf_out_before_reqbuf_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	int ret;
+	test_result_strings_init(&result);
+
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_qbuf_out_invalid_index_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	guint count;
+	int ret;
+	test_result_strings_init(&result);
+
+	count = prepare_out_buffers(2);
+
+	buf.index = count; /* one past the last valid index */
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+void
+test_qbuf_out_duplicate_index_rejected(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	void *map;
+	int ret;
+	test_result_strings_init(&result);
+
+	prepare_out_buffers(2);
+
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	cut_assert_equal_int(0, ret);
+
+	map = libv4l2_plugin.mmap(backend, NULL, buf.m.planes[0].length,
+				  PROT_READ | PROT_WRITE, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert(map != MAP_FAILED);
+	memset(map, 0xa5, buf.m.planes[0].length);
+	buf.m.planes[0].bytesused = buf.m.planes[0].length;
+	munmap(map, buf.m.planes[0].length);
+
+	/* The first queueing of a filled buffer succeeds. */
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	test_result_strings_add_int(&result, "first_qbuf_ret", 0, ret);
+
+	/* Queueing the same index again must be rejected. */
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	test_result_strings_add_int(&result, "duplicate_qbuf_ret", -1, ret);
+	test_result_strings_add_int(&result, "duplicate_qbuf_errno", EINVAL,
+				     errno);
+	test_result_strings_assert(&result);
+}
+
+struct streamon_result {
+	int ret;
+	int error_number;
+};
+
+static struct streamon_result
+snapshot_streamon_result(int ret)
+{
+	struct streamon_result result = {
+		.ret = ret,
+		.error_number = errno,
+	};
+
+	return result;
+}
+
+static gchar *
+streamon_result_to_string(const struct streamon_result *result)
+{
+	return g_strdup_printf("ret=%d\n"
+			       "error_number=%d\n",
+			       result->ret,
+			       result->error_number);
+}
+
+/*
+ * A VIDIOC_STREAMON on a device that is already streaming is a no-op that
+ * returns 0 (V4L2 spec), which is distinct from a STREAMON rejected while the
+ * plugin is shutting down (that returns EBUSY).  The started state is reached
+ * by a real STREAMON after a decodable buffer has been enqueued, not by
+ * flipping an internal flag.
+ */
+void
+test_streamon_is_noop_when_pipeline_already_started(void)
+{
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	guint8 *stream;
+	gsize stream_len;
+	void *map;
+	int ret;
+	struct streamon_result expected = {
+		.ret = 0,
+		.error_number = 0,
+	};
+	struct streamon_result actual;
+	const gchar *expected_string =
+		cut_take_string(streamon_result_to_string(&expected));
+	const gchar *actual_string;
+
+	if (!gst_element_factory_find("h264parse") ||
+	    !gst_element_factory_find("avdec_h264") ||
+	    !gst_element_factory_find("videoconvert") ||
+	    !gst_element_factory_find("x264enc"))
+		cut_pend("h264parse, avdec_h264, videoconvert or x264enc "
+			 "element is not available");
+
+	stream = generate_h264_sample(1, 320, 240, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	prepare_out_buffers(2);
+
+	/* Enqueue one decodable OUTPUT buffer so STREAMON has data to start. */
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf));
+	map = libv4l2_plugin.mmap(backend, NULL, buf.m.planes[0].length,
+				  PROT_READ | PROT_WRITE, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert(map != MAP_FAILED);
+	cut_assert(stream_len <= (gsize) buf.m.planes[0].length);
+	memcpy(map, stream, stream_len);
+	buf.m.planes[0].bytesused = (unsigned int) stream_len;
+	munmap(map, buf.m.planes[0].length);
+	g_free(stream);
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+
+	/* Start the stream for real. */
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_STREAMON, &type));
+
+	/* A repeat STREAMON on an already-started device is a no-op. */
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_STREAMON, &type);
+	actual = snapshot_streamon_result(ret);
+	actual_string = cut_take_string(streamon_result_to_string(&actual));
+
+	assert_equal_result_strings(expected_string, actual_string);
+}
+
+void
+test_querybuf_out_valid_index(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	int ret;
+	test_result_strings_init(&result);
+
+	prepare_out_buffers(2);
+
+	/* A valid index returns the buffer's plane geometry. */
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	test_result_strings_add_int(&result, "valid_ret", 0, ret);
+	test_result_strings_add_uint(&result, "valid_index", 0, buf.index);
+	test_result_strings_add_uint(&result, "valid_offset", 0,
+				     buf.m.planes[0].m.mem_offset);
+	test_result_strings_add_uint(&result, "valid_length_nonzero", 1,
+				     buf.m.planes[0].length > 0);
+
+	test_result_strings_assert(&result);
+}
+
+void
+test_querybuf_out_invalid_index(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	guint count;
+	int ret;
+	test_result_strings_init(&result);
+
+	count = prepare_out_buffers(2);
+	buf.index = count;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf);
+	test_result_strings_add_int(&result, "ret", -1, ret);
+	test_result_strings_add_int(&result, "errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+/* ------------------------------------------------------------------ */
+/* Config-driven behaviour: min_buffers / max dims / preferred format  */
+/* ------------------------------------------------------------------ */
+
+void
+test_g_ctrl_min_buffers_reflects_config(void)
+{
+	struct test_result_strings result;
+	struct v4l2_control ctrl = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	backend->config.cap_min_buffers = 7;
+	ctrl.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
+	ctrl.value = 0;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_G_CTRL, &ctrl);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_int(&result, "value", 7, ctrl.value);
+	test_result_strings_assert(&result);
+}
+
+void
+test_enum_framesizes_clamped_by_config_max_dimensions(void)
+{
+	struct test_result_strings result;
+	struct v4l2_frmsizeenum frame_size = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	backend->config.max_width = 320;
+	backend->config.max_height = 240;
+
+	frame_size.pixel_format = V4L2_PIX_FMT_NV12;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FRAMESIZES, &frame_size);
+	test_result_strings_add_int(&result, "ret", 0, ret);
+	test_result_strings_add_uint(&result, "type", V4L2_FRMSIZE_TYPE_STEPWISE,
+				     frame_size.type);
+	test_result_strings_add_uint(&result, "max_width", 320,
+				     frame_size.stepwise.max_width);
+	test_result_strings_add_uint(&result, "max_height", 240,
+				     frame_size.stepwise.max_height);
+	test_result_strings_assert(&result);
+}
+
+void
+test_enum_fmt_capture_returns_preferred_format(void)
+{
+	struct test_result_strings result;
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	/* Re-derive the supported CAPTURE formats with a non-default
+	 * preferred raw format. */
+	backend->config.preferred_format = V4L2_PIX_FMT_NV21;
+	v4l_gst_core_setup_role(backend);
+
+	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	desc.index = 0;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	test_result_strings_add_int(&result, "preferred_ret", 0, ret);
+	test_result_strings_add_uint(&result, "preferred_format",
+				     V4L2_PIX_FMT_NV21, desc.pixelformat);
+	test_result_strings_assert(&result);
+}
+
+void
+test_enum_fmt_capture_rejects_index_after_preferred_format(void)
+{
+	struct test_result_strings result;
+	struct v4l2_fmtdesc desc = { 0, };
+	int ret;
+	test_result_strings_init(&result);
+
+	backend->config.preferred_format = V4L2_PIX_FMT_NV21;
+	v4l_gst_core_setup_role(backend);
+	desc.index = 1;
+	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
+	test_result_strings_add_int(&result, "next_index_ret", -1, ret);
+	test_result_strings_add_int(&result, "next_index_errno", EINVAL, errno);
+	test_result_strings_assert(&result);
 }

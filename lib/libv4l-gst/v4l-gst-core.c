@@ -1291,6 +1291,16 @@ v4l_gst_deinit(struct v4l_gst *priv)
 		gst_object_unref(priv->video_sink_pad);
 	}
 
+	/* Drop the pipeline before freeing the buffer cache, pools and
+	   queue_mutex.  Unrefing the bin finalises the appsrc, which releases
+	   any OUTPUT buffer still queued there (QBUF'd but not yet STREAMON'd)
+	   through notify_unref(); that path reads priv->out.buffers and takes
+	   queue_mutex, so both must still be alive here.  The probes and pad
+	   references above were removed first so no pad callback fires during
+	   the teardown. */
+	if (priv->pipeline)
+		gst_object_unref(priv->pipeline);
+
 	if (priv->out.buffers)
 		g_free(priv->out.buffers);
 
@@ -1316,9 +1326,6 @@ v4l_gst_deinit(struct v4l_gst *priv)
 
 	g_mutex_clear(&priv->cap.reqbuf_mutex);
 	g_cond_clear(&priv->cap.reqbuf_cond);
-
-	if (priv->pipeline)
-		gst_object_unref(priv->pipeline);
 
 	if (priv->config.pipelines)
 		g_hash_table_destroy(priv->config.pipelines);

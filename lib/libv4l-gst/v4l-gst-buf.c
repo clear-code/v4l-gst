@@ -1569,8 +1569,10 @@ streamon_ioctl_out(struct v4l_gst *priv)
 	}
 
 	if (priv->is_pipeline_started) {
-		GST_ERROR("The pipeline is already running");
-		errno = EBUSY;
+		/* Per the V4L2 spec, a STREAMON while streaming is already in
+		   progress does nothing and returns 0. */
+		GST_DEBUG("The pipeline is already running");
+		ret = 0;
 		goto unlock;
 	}
 
