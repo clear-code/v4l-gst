@@ -2,6 +2,7 @@
 #include "v4l-gst.h"
 #include <cutter.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <libv4l-plugin.h>
 #include <sys/mman.h>
@@ -3221,5 +3222,389 @@ test_enum_fmt_capture_rejects_index_after_preferred_format(void)
 	ret = v4l_gst_ioctl(VIDIOC_ENUM_FMT, &desc);
 	test_result_strings_add_int(&result, "next_index_ret", -1, ret);
 	test_result_strings_add_int(&result, "next_index_errno", EINVAL, errno);
+	test_result_strings_assert(&result);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buffer state / non-blocking / streaming-state P1 gaps               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * VIDIOC_QUERYBUF must expose the buffer's queueing state through the flags
+ * field (V4L2_BUF_FLAG_QUEUED is valid here per the V4L2 spec), while
+ * bytesused/timestamp are meaningless in this context and are only returned by
+ * the corresponding DQBUF (see test_cap_buffer_return_roundtrip).
+ */
+void
+test_querybuf_reports_queued_state_around_qbuf(void)
+{
+	struct test_result_strings result;
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	void *map;
+	int ret;
+	test_result_strings_init(&result);
+
+	prepare_out_buffers(2);
+
+	/* After REQBUFS the client owns the buffer, so it is not queued. */
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf));
+	test_result_strings_add_uint(&result, "queued_after_reqbuf", 0,
+				     (buf.flags & V4L2_BUF_FLAG_QUEUED) != 0);
+
+	/* Fill and queue the buffer. */
+	map = libv4l2_plugin.mmap(backend, NULL, buf.m.planes[0].length,
+				  PROT_READ | PROT_WRITE, MAP_SHARED, -1,
+				  (int64_t) buf.m.planes[0].m.mem_offset);
+	cut_assert(map != MAP_FAILED);
+	memset(map, 0xa5, buf.m.planes[0].length);
+	buf.m.planes[0].bytesused = buf.m.planes[0].length;
+	munmap(map, buf.m.planes[0].length);
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+	test_result_strings_add_int(&result, "qbuf_ret", 0, ret);
+
+	/* QUERYBUF now reports the buffer as queued. */
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf));
+	test_result_strings_add_uint(&result, "queued_after_qbuf", 1,
+				     (buf.flags & V4L2_BUF_FLAG_QUEUED) != 0);
+
+	test_result_strings_assert(&result);
+}
+
+static int
+ioctl_on_backend(struct v4l_gst *priv, unsigned long int cmd, void *arg)
+{
+	return libv4l2_plugin.ioctl(priv, -1, cmd, arg);
+}
+
+/*
+ * A backend opened on an O_NONBLOCK fd must be detected as non-blocking by
+ * init() (via fcntl) and a VIDIOC_DQBUF on OUTPUT with no buffer the driver
+ * can hand back must fail with EAGAIN immediately rather than block.
+ */
+void
+test_dqbuf_out_empty_nonblocking_eagain(void)
+{
+	struct test_result_strings result;
+	struct v4l_gst *nb = NULL;
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	const guint32 w = 320;
+	const guint32 h = 240;
+	const gsize frame_size = w * h * 3 / 2;
+	gchar *nb_path = NULL;
+	int nb_fd = -1;
+	int ret;
+	gint64 start, elapsed_us;
+	test_result_strings_init(&result);
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	/* A dedicated fd carrying O_NONBLOCK, independent of the blocking
+	   backend created by setup(). */
+	{
+		GError *error = NULL;
+		int flags;
+
+		nb_fd = g_file_open_tmp("v4l-gst-nb-XXXXXX", &nb_path, &error);
+		cut_assert_null(error);
+		flags = fcntl(nb_fd, F_GETFL);
+		cut_assert(flags >= 0);
+		cut_assert_equal_int(0, fcntl(nb_fd, F_SETFL, flags | O_NONBLOCK));
+	}
+
+	nb = libv4l2_plugin.init(nb_fd);
+	cut_assert_not_null(nb);
+	test_result_strings_add_uint(&result, "nonblocking_detected", 1,
+				     nb->is_non_blocking);
+
+	prepare_pipeline_backend_fixture(nb, V4L_GST_ROLE_DECODER,
+					 "h264parse ! avdec_h264 ! videoconvert",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, 4 * 1024 * 1024);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 4 * 1024 * 1024;
+	cut_assert_equal_int(0, ioctl_on_backend(nb, VIDIOC_S_FMT, &format));
+
+	memset(&format, 0, sizeof(format));
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+	format.fmt.pix_mp.width = w;
+	format.fmt.pix_mp.height = h;
+	format.fmt.pix_mp.num_planes = 1;
+	format.fmt.pix_mp.plane_fmt[0].bytesperline = w;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = frame_size;
+	cut_assert_equal_int(0, ioctl_on_backend(nb, VIDIOC_S_FMT, &format));
+
+	/* Allocate OUTPUT buffers; every one is acquired by the client, so the
+	   pool holds nothing the driver can return. */
+	req.count = 2;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	cut_assert_equal_int(0, ioctl_on_backend(nb, VIDIOC_REQBUFS, &req));
+	cut_assert(req.count >= 1);
+
+	/* Start streaming without queueing any OUTPUT buffer. */
+	cut_assert_equal_int(0, ioctl_on_backend(nb, VIDIOC_STREAMON, &type));
+
+	memset(&buf, 0, sizeof(buf));
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	errno = 0;
+	start = g_get_monotonic_time();
+	ret = ioctl_on_backend(nb, VIDIOC_DQBUF, &buf);
+	elapsed_us = g_get_monotonic_time() - start;
+
+	test_result_strings_add_int(&result, "dqbuf_ret", -1, ret);
+	test_result_strings_add_int(&result, "dqbuf_errno", EAGAIN, errno);
+	test_result_strings_add_uint(&result, "returned_without_blocking", 1,
+				     elapsed_us < 1000000);
+
+	/* Release the second backend before asserting so the fd/file are always
+	   cleaned up. */
+	libv4l2_plugin.close(nb);
+	close(nb_fd);
+	g_unlink(nb_path);
+	g_free(nb_path);
+
+	test_result_strings_assert(&result);
+}
+
+/*
+ * VIDIOC_REQBUFS on OUTPUT with a non-zero count while the pipeline is already
+ * streaming must be rejected with EBUSY (the buffers are in use by the running
+ * stream).
+ */
+void
+test_reqbuf_out_while_streaming_ebusy(void)
+{
+	struct test_result_strings result;
+	struct v4l2_requestbuffers req = { 0, };
+	const guint8 garbage[] = { 0 };
+	int ret;
+	test_result_strings_init(&result);
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+
+	/* Reach the started state through a real STREAMON. */
+	start_h264dec_stream(garbage, sizeof(garbage));
+
+	req.count = 2;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	errno = 0;
+	ret = v4l_gst_ioctl(VIDIOC_REQBUFS, &req);
+	test_result_strings_add_int(&result, "reqbuf_ret", -1, ret);
+	test_result_strings_add_int(&result, "reqbuf_errno", EBUSY, errno);
+	test_result_strings_assert(&result);
+}
+
+/*
+ * A CAPTURE buffer handed back by VIDIOC_DQBUF must be re-queueable and the
+ * same index must be produced again by a later DQBUF, carrying the
+ * API-guaranteed data (a non-zero bytesused and a non-decreasing timestamp).
+ * The fixture feeds far more frames than the pool holds, so the re-queued
+ * index is guaranteed to come back; the loop keeps re-queueing the other
+ * buffers so they cannot mask the result, and only stops once the recorded
+ * index reappears (or the final-buffer flag ends the stream).
+ */
+void
+test_cap_buffer_return_roundtrip(void)
+{
+	struct test_result_strings result;
+	struct v4l2_format format = { 0, };
+	struct v4l2_requestbuffers req = { 0, };
+	struct v4l2_buffer buf = { 0, };
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	enum v4l2_buf_type type;
+	const guint32 w = 320;
+	const guint32 h = 240;
+	const gsize frame_size = w * h * 3 / 2;
+	const guint32 n_frames = 100;
+	gsize stream_len = 0;
+	guint8 *stream;
+	guint cap_count, i;
+	guint first_index = 0;
+	struct timeval first_ts;
+	int ret;
+	test_result_strings_init(&result);
+
+	if (!h264dec_pipeline_available())
+		cut_pend("h264parse, avdec_h264 or videoconvert is not available");
+	stream = generate_h264_sample(n_frames, w, h, &stream_len);
+	if (!stream)
+		cut_pend("failed to generate an h264 sample stream");
+
+	prepare_pipeline_backend_fixture(backend, V4L_GST_ROLE_DECODER,
+					 "h264parse ! avdec_h264 ! videoconvert",
+					 V4L2_PIX_FMT_H264, V4L2_PIX_FMT_NV12,
+					 w, h, frame_size, 4 * 1024 * 1024);
+	assert_role(V4L_GST_ROLE_DECODER);
+
+	format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_H264;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = 4 * 1024 * 1024;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_S_FMT, &format));
+
+	memset(&format, 0, sizeof(format));
+	format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+	format.fmt.pix_mp.width = w;
+	format.fmt.pix_mp.height = h;
+	format.fmt.pix_mp.num_planes = 1;
+	format.fmt.pix_mp.plane_fmt[0].bytesperline = w;
+	format.fmt.pix_mp.plane_fmt[0].sizeimage = frame_size;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_S_FMT, &format));
+
+	memset(&req, 0, sizeof(req));
+	req.count = 1;
+	req.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_REQBUFS, &req));
+
+	memset(&buf, 0, sizeof(buf));
+	buf.index = 0;
+	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	buf.memory = V4L2_MEMORY_MMAP;
+	buf.m.planes = planes;
+	buf.length = 1;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QUERYBUF, &buf));
+	{
+		void *map = libv4l2_plugin.mmap(backend, NULL,
+						buf.m.planes[0].length,
+						PROT_READ | PROT_WRITE, MAP_SHARED,
+						-1,
+						(int64_t) buf.m.planes[0].m.mem_offset);
+		cut_assert(map != MAP_FAILED);
+		cut_assert(stream_len <= (gsize) buf.m.planes[0].length);
+		memcpy(map, stream, stream_len);
+		buf.m.planes[0].bytesused = (unsigned int) stream_len;
+		munmap(map, buf.m.planes[0].length);
+	}
+	g_free(stream);
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_STREAMON, &type));
+
+	memset(&req, 0, sizeof(req));
+	req.count = 8;
+	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	req.memory = V4L2_MEMORY_MMAP;
+	cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_REQBUFS, &req));
+	cap_count = req.count;
+	cut_assert(cap_count > 0);
+
+	{
+		struct v4l2_decoder_cmd decoder_cmd = { 0, };
+		decoder_cmd.cmd = V4L2_DEC_CMD_STOP;
+		cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_DECODER_CMD,
+						      &decoder_cmd));
+	}
+
+	for (i = 0; i < cap_count; i++) {
+		memset(&buf, 0, sizeof(buf));
+		buf.index = i;
+		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.m.planes = planes;
+		buf.length = 2;
+		cut_assert_equal_int(0, v4l_gst_ioctl(VIDIOC_QBUF, &buf));
+	}
+
+	/* Dequeue CAPTURE buffers, re-queueing each one so the decoder keeps
+	   cycling through the fixed pool. The first dequeued index is recorded;
+	   the test then waits for that exact index to be handed back, which
+	   only happens if the re-queued buffer is produced again. The DQBUF is
+	   driven in non-blocking mode (as the EOS test does) so an empty queue
+	   returns EAGAIN instead of blocking, letting the retry bound below
+	   always terminate the wait. */
+	{
+		gboolean first_seen = FALSE;
+		gboolean returned = FALSE;
+		guint frames = 0;
+		guint retries = 0;
+		const guint max_frames = 1024;
+		const guint max_retries = 1000;
+
+		backend->is_non_blocking = TRUE;
+		while (!returned && frames < max_frames) {
+			memset(&buf, 0, sizeof(buf));
+			buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+			buf.memory = V4L2_MEMORY_MMAP;
+			buf.m.planes = planes;
+			buf.length = 2;
+			errno = 0;
+			ret = v4l_gst_ioctl(VIDIOC_DQBUF, &buf);
+			if (ret != 0) {
+				if (++retries >= max_retries)
+					break;
+				g_usleep(1000);
+				continue;
+			}
+			frames++;
+
+			if (!first_seen) {
+				first_index = buf.index;
+				first_ts = buf.timestamp;
+				first_seen = TRUE;
+				test_result_strings_add_uint(&result,
+					"first_index_in_range", 1,
+					first_index < cap_count);
+				test_result_strings_add_uint(&result,
+					"first_bytesused_nonzero", 1,
+					buf.m.planes[0].bytesused > 0);
+			} else if (buf.index == first_index) {
+				returned = TRUE;
+				test_result_strings_add_uint(&result,
+					"returned_bytesused_nonzero", 1,
+					buf.m.planes[0].bytesused > 0);
+				test_result_strings_add_uint(&result,
+					"timestamp_monotonic", 1,
+					(buf.timestamp.tv_sec > first_ts.tv_sec) ||
+					(buf.timestamp.tv_sec == first_ts.tv_sec &&
+					 buf.timestamp.tv_usec >= first_ts.tv_usec));
+				break;
+			}
+
+			if (buf.flags & V4L2_BUF_FLAG_LAST)
+				break;
+
+			buf.flags = 0;
+			errno = 0;
+			ret = v4l_gst_ioctl(VIDIOC_QBUF, &buf);
+			if (ret != 0)
+				break;
+		}
+
+		backend->is_non_blocking = FALSE;
+
+		test_result_strings_add_uint(&result, "requeued_index_returned",
+					     1, returned);
+	}
+
 	test_result_strings_assert(&result);
 }

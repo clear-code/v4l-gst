@@ -882,6 +882,13 @@ v4l_gst_ioctl_querybuf(struct v4l_gst *priv, struct v4l2_buffer *v4l2buf)
 	ret = fill_v4l2_buffer(priv, pool, buffers, buffers_num,
 			       NULL, NULL, v4l2buf);
 
+	/* VIDIOC_QUERYBUF must report the buffer's queueing state: the
+	   V4L2_BUF_FLAG_QUEUED flag is valid in this context per the V4L2
+	   spec, while bytesused/timestamp are meaningless here and are only
+	   returned by the corresponding DQBUF. */
+	if (ret == 0 && buffers[v4l2buf->index].state == V4L_GST_BUFFER_QUEUED)
+		v4l2buf->flags |= V4L2_BUF_FLAG_QUEUED;
+
 	g_mutex_unlock(&priv->dev_lock);
 
 	return ret;
